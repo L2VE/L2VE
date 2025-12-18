@@ -1,0 +1,92 @@
+# ==========================================
+# L2VE .gitignore
+# ==========================================
+
+# 환경변수 (민감 정보)
+.env
+.env.integrated
+.env.local
+.env.production
+
+# 환경변수 예제는 커밋 OK
+!.env.example
+!.env.integrated.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+*.pyc
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+
+# Docker
+*.tar.gz
+docker-compose.override.yml
+
+# Logs
+logs/
+*.log
+
+# Database
+*.sql.backup
+*.db
+*.sqlite3
+
+# Data & Backups
+data/
+!data/.gitkeep
+
+# Build artifacts
+results/*.json
+
+# Jenkins
+jenkins_home/
+
+# LangGraph Scanner (Full Scan)
+langgraph-scanner/venv/
+langgraph-scanner/.env
+langgraph-scanner/analysis_results/
+langgraph-scanner/results/
+langgraph-scanner/**/__pycache__/
+
+# LangGraph Scan (Quick Scan)
+langgraph-scan/venv/
+langgraph-scan/.env
+langgraph-scan/analysis_results/
+langgraph-scan/results/
+langgraph-scan/**/__pycache__/
+
+# Secrets
+*secret*
+*key*
+*token*
+!.env.example
+!jenkins/init.groovy.d/03-generate-api-key.groovy

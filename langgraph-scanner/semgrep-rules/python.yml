@@ -1,0 +1,747 @@
+rules:
+  - id: py-taint-ultra-any-input-into-any-call
+    languages: [python]
+    severity: WARNING
+    message: >
+      Untrusted/external input flows into function call `$FUNC` via `$TAINT`.
+      Review whether this call is safe.
+    mode: taint
+    # -------------------------------------------------
+    # SOURCES: 외부/비신뢰 입력을 최대 포괄
+    # -------------------------------------------------
+    pattern-sources:
+      - pattern-either:
+          # ---------- Builtins / CLI / ENV / STDIN ----------
+          - pattern: input(...)
+          - pattern: sys.stdin.$M(...)
+          - pattern: sys.stdin.buffer.$M(...)
+          - pattern: os.read($FD, ...)
+          - pattern: sys.argv
+          - pattern: sys.argv[$I]
+          - pattern: $PARSER.parse_args(...)
+          - pattern: $PARSER.parse_known_args(...)
+          - pattern: getopt.getopt(...)
+          - pattern: os.environ[$K]
+          - pattern: os.getenv(...)
+          - pattern: os.environ.get(...)
+
+          # ---------- Files / streams ----------
+          - pattern: open(...).read(...)
+          - pattern: open(...).readline(...)
+          - pattern: open(...).readlines(...)
+          - pattern: pathlib.Path(...).read_text(...)
+          - pattern: io.$M(...).read(...)
+          - pattern: sys.stdin.buffer.read(...)
+
+          # ---------- Structured loaders ----------
+          - pattern: json.load($F)
+          - pattern: yaml.safe_load($F)
+          - pattern: yaml.load($F, ...)
+          - pattern: tomllib.load($F)
+          - pattern: configparser.ConfigParser().get(...)
+
+          # ---------- URL/query parsing ----------
+          - pattern: urllib.parse.parse_qs($X, ...)
+          - pattern: urllib.parse.parse_qsl($X, ...)
+          - pattern: urllib.parse.urlparse($X, ...)
+          - pattern: urllib.parse.urlsplit($X, ...)
+
+          # ---------- Django / DRF ----------
+          # index
+          - pattern: request.GET[$K]
+          - pattern: request.POST[$K]
+          - pattern: request.COOKIES[$K]
+          - pattern: request.FILES[$K]
+          - pattern: $REQ.GET[$K]
+          - pattern: $REQ.POST[$K]
+          - pattern: $REQ.COOKIES[$K]
+          - pattern: $REQ.FILES[$K]
+          # get/getlist
+          - pattern: request.GET.get(...)
+          - pattern: request.POST.get(...)
+          - pattern: request.GET.getlist(...)
+          - pattern: request.POST.getlist(...)
+          - pattern: $REQ.GET.get(...)
+          - pattern: $REQ.POST.get(...)
+          - pattern: $REQ.GET.getlist(...)
+          - pattern: $REQ.POST.getlist(...)
+          - pattern: request.COOKIES.get(...)
+          - pattern: $REQ.COOKIES.get(...)
+          # headers/meta/body/path
+          - pattern: request.headers[$K]
+          - pattern: request.headers.get(...)
+          - pattern: request.META[$K]
+          - pattern: request.META.get(...)
+          - pattern: request.body
+          - pattern: $REQ.headers[$K]
+          - pattern: $REQ.headers.get(...)
+          - pattern: $REQ.META[$K]
+          - pattern: $REQ.META.get(...)
+          - pattern: $REQ.body
+          - pattern: request.path
+          - pattern: request.get_full_path(...)
+          - pattern: request.build_absolute_uri(...)
+          # DRF data/query_params
+          - pattern: request.data[$K]
+          - pattern: request.data.get(...)
+          - pattern: $REQ.data[$K]
+          - pattern: $REQ.data.get(...)
+          - pattern: request.query_params[$K]
+          - pattern: request.query_params.get(...)
+          - pattern: $REQ.query_params[$K]
+          - pattern: $REQ.query_params.get(...)
+
+          # ---------- Flask / Werkzeug ----------
+          - pattern: flask.request.args[$K]
+          - pattern: flask.request.form[$K]
+          - pattern: flask.request.values[$K]
+          - pattern: flask.request.cookies[$K]
+          - pattern: flask.request.headers[$K]
+          - pattern: flask.request.args.get(...)
+          - pattern: flask.request.form.get(...)
+          - pattern: flask.request.values.get(...)
+          - pattern: flask.request.cookies.get(...)
+          - pattern: flask.request.headers.get(...)
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.json
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files[$K]
+          - pattern: flask.request.files.get(...)
+          # generic alias
+          - pattern: $REQ.args[$K]
+          - pattern: $REQ.form[$K]
+          - pattern: $REQ.values[$K]
+          - pattern: $REQ.cookies[$K]
+          - pattern: $REQ.headers[$K]
+          - pattern: $REQ.args.get(...)
+          - pattern: $REQ.form.get(...)
+          - pattern: $REQ.values.get(...)
+          - pattern: $REQ.cookies.get(...)
+          - pattern: $REQ.headers.get(...)
+          - pattern: $REQ.get_json(...)
+          - pattern: $REQ.data
+          - pattern: $REQ.get_data(...)
+          - pattern: $REQ.files[$K]
+          - pattern: $REQ.files.get(...)
+
+          # ---------- FastAPI / Starlette (request 객체 기반) ----------
+          - pattern: $REQ.query_params[$K]
+          - pattern: $REQ.path_params[$K]
+          - pattern: $REQ.headers[$K]
+          - pattern: $REQ.cookies[$K]
+          - pattern: $REQ.query_params.get(...)
+          - pattern: $REQ.path_params.get(...)
+          - pattern: $REQ.headers.get(...)
+          - pattern: $REQ.cookies.get(...)
+          - pattern: "await $REQ.json(...)"
+          - pattern: "await $REQ.body(...)"
+          - pattern: "await $REQ.form(...)"
+
+          # ---------- AIOHTTP ----------
+          - pattern: $REQ.query[$K]
+          - pattern: $REQ.query.get(...)
+          - pattern: $REQ.match_info[$K]
+          - pattern: $REQ.match_info.get(...)
+          - pattern: "await $REQ.json(...)"
+          - pattern: "await $REQ.post(...)"
+          - pattern: "await $REQ.text(...)"
+          - pattern: "await $REQ.read(...)"
+
+          # ---------- Tornado ----------
+          - pattern: self.get_argument(...)
+          - pattern: self.get_arguments(...)
+          - pattern: self.get_query_argument(...)
+          - pattern: self.get_query_arguments(...)
+          - pattern: self.get_body_argument(...)
+          - pattern: self.get_body_arguments(...)
+          - pattern: self.request.headers.get(...)
+          - pattern: self.request.body
+
+          # ---------- Sanic ----------
+          - pattern: request.args.get(...)
+          - pattern: request.form.get(...)
+          - pattern: request.cookies.get(...)
+          - pattern: request.headers.get(...)
+          - pattern: request.json
+          - pattern: request.body
+
+          # ---------- Bottle ----------
+          - pattern: bottle.request.query.get(...)
+          - pattern: bottle.request.forms.get(...)
+          - pattern: bottle.request.cookies.get(...)
+          - pattern: bottle.request.headers.get(...)
+
+          # ---------- Pyramid ----------
+          - pattern: request.params.get(...)
+          - pattern: request.headers.get(...)
+          - pattern: request.cookies.get(...)
+
+          # ---------- WebSocket (server) ----------
+          - pattern: "await $WS.receive_text(...)"
+          - pattern: "await $WS.receive_bytes(...)"
+
+          # ---------- Generic sockets ----------
+          - pattern: $SOCK.recv(...)
+          - pattern: $SOCK.recvfrom(...)
+          - pattern: $SOCK.makefile(...).read(...)
+
+          # ---------- WSGI environ ----------
+          - pattern: environ[$K]
+          - pattern: environ.get(...)
+
+          # ---------- HTTP CLIENT responses ----------
+          - pattern: requests.$M(...).text
+          - pattern: requests.$M(...).content
+          - pattern: requests.$M(...).json(...)
+          - pattern: httpx.$M(...).text
+          - pattern: httpx.$M(...).content
+          - pattern: httpx.$M(...).json(...)
+          - pattern: urllib.request.urlopen(...).read(...)
+          - pattern: "await $HTTPRESP.text(...)"
+          - pattern: "await $HTTPRESP.read(...)"
+          - pattern: "await $HTTPRESP.json(...)"
+
+          # ---------- Subprocess output ----------
+          - pattern: subprocess.check_output(...)
+          - pattern: subprocess.run(..., capture_output=True, ...)
+          - pattern: subprocess.Popen(...).stdout.read(...)
+
+          # ---------- Message queues (generic) ----------
+          - pattern: $CONS.poll(...)
+          - pattern: $CONS.get(...)
+          - pattern: $CONS.consume(...)
+          - pattern: $CONS.receive(...)
+
+          # ---------- Prompt libs ----------
+          - pattern: click.prompt(...)
+          - pattern: typer.prompt(...)
+
+          # ---------- ULTRA-BOOST: 사전/컨테이너/래퍼 접근 전부 ----------
+          - pattern: $MAP[$K]
+          - pattern: $MAP.get(...)
+          - pattern: $MAP.pop(...)
+          - pattern: $MAP.setdefault(...)
+          - pattern: $OBJ.get(...)
+          - pattern: $OBJ.getlist(...)
+          - pattern: $OBJ.pop(...)
+          - pattern: $OBJ.__getitem__($K)
+          - pattern: $OBJ.__getattr__($K)
+
+          # =================================================
+          # Streamlit: 입력 위젯 (alias 포함 모든 형태)
+          # =================================================
+
+          # 1) import streamlit as <alias> (e.g. import streamlit as st / foo / ui)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.text_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.text_area(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.number_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.slider(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.selectbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.multiselect(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.radio(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.checkbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.chat_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.file_uploader(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.data_editor(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.experimental_data_editor(...)
+
+          # sidebar 위젯
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.text_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.text_area(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.number_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.slider(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.selectbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.multiselect(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.radio(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.checkbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.chat_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.file_uploader(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.sidebar.data_editor(...)
+
+          # session_state (alias 포함)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.session_state[$K]
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.session_state.get(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.session_state.pop(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.session_state.setdefault(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit as $ST
+                  ...
+              - pattern: $ST.session_state.$ATTR
+
+          # 2) import streamlit  (모듈명 직접 사용)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.text_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.text_area(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.number_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.slider(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.selectbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.multiselect(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.radio(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.checkbox(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.chat_input(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.file_uploader(...)
+          - patterns:
+              - pattern-inside: |
+                  import streamlit
+                  ...
+              - pattern: streamlit.data_editor(...)
+
+          # 3) from streamlit import <함수> / as <alias>
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import text_input
+                  ...
+              - pattern: text_input(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import text_input as $TI
+                  ...
+              - pattern: $TI(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import text_area
+                  ...
+              - pattern: text_area(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import text_area as $TA
+                  ...
+              - pattern: $TA(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import number_input
+                  ...
+              - pattern: number_input(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import number_input as $NI
+                  ...
+              - pattern: $NI(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import slider
+                  ...
+              - pattern: slider(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import slider as $SL
+                  ...
+              - pattern: $SL(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import selectbox
+                  ...
+              - pattern: selectbox(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import selectbox as $SB
+                  ...
+              - pattern: $SB(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import multiselect
+                  ...
+              - pattern: multiselect(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import multiselect as $MS
+                  ...
+              - pattern: $MS(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import radio
+                  ...
+              - pattern: radio(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import radio as $RD
+                  ...
+              - pattern: $RD(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import checkbox
+                  ...
+              - pattern: checkbox(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import checkbox as $CB
+                  ...
+              - pattern: $CB(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import chat_input
+                  ...
+              - pattern: chat_input(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import chat_input as $CI
+                  ...
+              - pattern: $CI(...)
+
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import file_uploader
+                  ...
+              - pattern: file_uploader(...)
+          - patterns:
+              - pattern-inside: |
+                  from streamlit import file_uploader as $FU
+                  ...
+              - pattern: $FU(...)
+
+      # ---------- FastAPI 엔드포인트 함수 인자 전체를 source 취급 ----------
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD(...)
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @$APP.$METHOD(...)
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+
+      # ---------- LangGraph Functional API: @entrypoint / @task 파라미터 ----------
+      # @entrypoint(...)
+      - patterns:
+          - pattern-inside: |
+              @entrypoint(...)
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @entrypoint(...)
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      # @entrypoint (괄호 없는 버전)
+      - patterns:
+          - pattern-inside: |
+              @entrypoint
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @entrypoint
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+
+      # @task(...) / @task
+      - patterns:
+          - pattern-inside: |
+              @task(...)
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @task(...)
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @task
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @task
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+
+      # ---------- LangChain tool 함수 (@tool) 파라미터 ----------
+      - patterns:
+          - pattern-inside: |
+              @tool(...)
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @tool(...)
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @tool
+              async def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+      - patterns:
+          - pattern-inside: |
+              @tool
+              def $FUNC(..., $PARAM, ...):
+                  ...
+          - pattern: $PARAM
+
+    # -------------------------------------------------
+    # PROPAGATORS: 오염 전파 (광범위)
+    # -------------------------------------------------
+    pattern-propagators:
+      # 대입/반환/컨테이너 조작/속성 대입
+      - pattern: $Y = $X
+        from: $X
+        to: $Y
+      - pattern: return $X
+        from: $X
+        to: $RET
+      - pattern: $SEQ.append($X)
+        from: $X
+        to: $SEQ
+      - pattern: $SEQ.extend($X)
+        from: $X
+        to: $SEQ
+      - pattern: $MAP.update($X)
+        from: $X
+        to: $MAP
+      - pattern: $MAP[$K] = $X
+        from: $X
+        to: $MAP
+      - pattern: $OBJ.$ATTR = $X
+        from: $X
+        to: $OBJ
+
+      # 임의 함수/메서드 래핑 → 결과 전파
+      - pattern: $Y = $F(..., $X, ...)
+        from: $X
+        to: $Y
+
+      # 문자열/바이트/경로/직렬화 결합
+      - pattern: "str($X)"
+        from: $X
+        to: $RET
+      - pattern: "repr($X)"
+        from: $X
+        to: $RET
+      - pattern: 'f"{$X}"'
+        from: $X
+        to: $RET
+      - pattern: "'{}'.format($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "$S.format($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: $Y = $X + $Z
+        from: $X
+        to: $Y
+      - pattern: $Y = $Z + $X
+        from: $X
+        to: $Y
+      - pattern: "$SEP.join($X)"
+        from: $X
+        to: $RET
+      - pattern: "bytes($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "bytearray($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "json.dumps($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "urllib.parse.$F($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "os.path.join(..., $X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "pathlib.PurePath(..., $X, ...)"
+        from: $X
+        to: $RET
+
+      # 리터럴 생성 시 전파 (list/dict/set/tuple)
+      - pattern: "[$X, ...]"
+        from: $X
+        to: $RET
+      - pattern: "($X, ...)"
+        from: $X
+        to: $RET
+      - pattern: "{$K: $X, ...}"
+        from: $X
+        to: $RET
+      - pattern: "{$X, ...}"
+        from: $X
+        to: $RET
+
+    # -------------------------------------------------
+    # SINKS: 모든 함수 호출 (예외 없음)
+    # -------------------------------------------------
+    pattern-sinks:
+      - pattern: $FUNC(..., $TAINT, ...)
+
+    focus-metavariable: TAINT
+
+    metadata:
+      category: security, taint
+      technology: [python]
+      notes: >
+        ULTRA: sanitizers 없음, sink 예외 없음.
+        FastAPI/LangGraph/LangChain/Streamlit 사용자 입력 지점을
+        최대한 과하게 source로 간주하므로 노이즈가 매우 많을 수 있음.

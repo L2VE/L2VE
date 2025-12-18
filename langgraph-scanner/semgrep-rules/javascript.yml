@@ -1,0 +1,234 @@
+rules:
+    - id: js-find-all-sources-directly-fixed-schema
+      mode: search
+      languages: [javascript, typescript]
+      severity: INFO
+      message: "Potential user input source identified. Data from this location should be treated as untrusted."
+
+      pattern-either:
+          # -------------------------------------------------
+          # 1. HTTP Frameworks (Express, NestJS's @Req(), etc.)
+          #    - 'patterns' 구조로 수정하여 스키마 오류 해결
+          # -------------------------------------------------
+          - patterns:
+                - pattern: $REQ.body
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|ctx\.request)
+          - patterns:
+                - pattern: $REQ.query
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|ctx)
+          - patterns:
+                - pattern: $REQ.params
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|ctx)
+          - patterns:
+                - pattern: $REQ.headers
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|ctx\.request)
+          - patterns:
+                - pattern: $REQ.cookies
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+          - patterns:
+                - pattern: $REQ.signedCookies
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+          - patterns:
+                - pattern: $REQ.payload # Hapi
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - pattern: $CTX.cookies.get(...) # Koa (metavariable-regex 불필요)
+
+          # -------------------------------------------------
+          # 1-2. Express 계열 추가 필드
+          # -------------------------------------------------
+          - patterns:
+                - pattern: $REQ.url
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.originalUrl
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.path
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.ip
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.ips
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.file
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.files
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: $REQ.get(...)
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          # -------------------------------------------------
+          # 2. NestJS Decorators (변경 없음)
+          # -------------------------------------------------
+          - pattern: |
+                @Body(...) $PARAM
+          - pattern: |
+                @Query(...) $PARAM
+          - pattern: |
+                @Param(...) $PARAM
+          - pattern: |
+                @Headers(...) $PARAM
+          - pattern: |
+                @Session(...) $PARAM
+          - pattern: |
+                @UploadedFile(...) $PARAM
+          - pattern: |
+                @UploadedFiles(...) $PARAM
+
+          # -------------------------------------------------
+          # 2-2. NestJS 기타 데코레이터
+          # -------------------------------------------------
+          - pattern: |
+                @Req(...) $PARAM
+          - pattern: |
+                @Request(...) $PARAM
+          - pattern: |
+                @Ip(...) $PARAM
+          - pattern: |
+                @HostParam(...) $PARAM
+          - pattern: |
+                @Context(...) $PARAM
+
+          # -------------------------------------------------
+          # 3. GraphQL Resolvers (변경 없음)
+          # -------------------------------------------------
+          - pattern: ($PARENT, $ARGS, $CONTEXT, $INFO) => { ... }
+          - pattern: function $NAME($PARENT, $ARGS, $CONTEXT, $INFO) { ... }
+          - pattern: $METHOD($PARENT, $ARGS, $CONTEXT, $INFO) { ... }
+          - pattern: |
+                @Args(...) $ARGS
+
+          # -------------------------------------------------
+          # 4. Process, Environment, and Standard Input (변경 없음)
+          # -------------------------------------------------
+          - pattern: process.argv
+          - pattern: process.env
+          - pattern: process.stdin
+          - pattern: "process.stdin.on('data', ...)"
+
+          # -------------------------------------------------
+          # 5. File System & Child Process (변경 없음)
+          # -------------------------------------------------
+          - pattern: fs.readFileSync(...)
+          - pattern: fs.promises.readFile(...)
+          - pattern: fs.createReadStream(...)
+          - pattern: child_process.execSync(...)
+          - pattern: child_process.exec(...)
+          - pattern: require('fs').readFileSync(...)
+          - pattern: require('child_process').execSync(...)
+
+          # -------------------------------------------------
+          # 6. Network and API Responses (변경 없음)
+          # -------------------------------------------------
+          - pattern: (await axios.$M(...)).data
+          - pattern: (await fetch(...)).json()
+          - pattern: (await fetch(...)).text()
+          - pattern: $XHR.response
+          - pattern: $XHR.responseText
+          - pattern: $EV.data
+          - pattern: "$WS.on('message', ...)"
+
+          # -------------------------------------------------
+          # 6-x. socket.io 등 WebSocket 이벤트 핸들러
+          # -------------------------------------------------
+          - pattern: $SOCKET.on($EVENT, ($DATA) => { ... })
+          - pattern: $SOCKET.on($EVENT, function ($DATA) { ... })
+
+          # -------------------------------------------------
+          # 7. Database Query Results (변경 없음)
+          # -------------------------------------------------
+          - pattern: await $DB.query(...)
+          - pattern: await $DB.execute(...)
+          - pattern: await $MODEL.find(...)
+          - pattern: await $MODEL.findOne(...)
+          - pattern: await $MODEL.findAll(...)
+
+          # -------------------------------------------------
+          # 8. Browser-specific APIs (변경 없음)
+          # -------------------------------------------------
+          - pattern: window.location
+          - pattern: document.location
+          - pattern: document.URL
+          - pattern: document.documentURI
+          - pattern: document.cookie
+          - pattern: localStorage.getItem(...)
+          - pattern: sessionStorage.getItem(...)
+          - pattern: window.prompt(...)
+          - pattern: new URLSearchParams(window.location.search)
+
+          # -------------------------------------------------
+          # 9. Fetch-style Request (Next.js App Router, Remix, SvelteKit 등)
+          # -------------------------------------------------
+          - patterns:
+                - pattern: $REQ.url
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|event\.request)
+
+          - patterns:
+                - pattern: $REQ.headers
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request|event\.request)
+
+          - patterns:
+                - pattern: await $REQ.json()
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: await $REQ.text()
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - patterns:
+                - pattern: await $REQ.formData()
+                - metavariable-regex:
+                      metavariable: $REQ
+                      regex: (?i)(req|request)
+
+          - pattern: event.request # Cloudflare Workers, 일부 프레임워크

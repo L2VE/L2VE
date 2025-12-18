@@ -1,0 +1,218 @@
+rules:
+  - id: java-taint-ultra-any-input-into-any-call
+    languages: [java]
+    severity: WARNING
+    message: >
+      Untrusted/external input flows into function/method/constructor call `$FUNC`
+      via `$TAINT`. Review whether this call is safe.
+    mode: taint
+    # -------------------------------------------------
+    # SOURCES: 가능한 모든 "외부/비신뢰" 입력 지점 (ULTRA)
+    # -------------------------------------------------
+    pattern-sources:
+      - pattern-either:
+          # ---------- CLI / ENV / SYSTEM PROPERTIES / STDIN ----------
+          - pattern: System.getenv(...)
+          - pattern: System.getProperty(...)
+          - pattern: System.getProperties()
+          - pattern: System.console().readLine(...)
+          - pattern: System.console().readPassword(...)
+          - pattern: System.in.read(...)
+          - pattern: new java.io.InputStreamReader(System.in)
+          - pattern: new java.io.BufferedReader(new java.io.InputStreamReader(System.in))
+          - pattern: new java.util.Scanner(System.in)
+          # Scanner에서 읽어오는 문자열 (ULTRA)
+          - pattern: $SC.nextLine()
+          - pattern: $SC.next()
+          - pattern: $SC.nextInt()
+          - pattern: $SC.nextLong()
+          # main(String[] args) 등에서의 args[]
+          - pattern: $ARGS[$I]
+
+          # Commons CLI / 기타 CLI 파서류 (제너릭)
+          - pattern: $CMDLINE.getOptionValue(...)
+          - pattern: $CMDLINE.getOptionValues(...)
+          - pattern: $CMDLINE.getArgs()
+
+          # ---------- Files / Streams / Reader ----------
+          - pattern: new java.io.FileInputStream($P)
+          - pattern: new java.io.FileReader($P)
+          - pattern: new java.io.BufferedReader(new java.io.FileReader($P))
+          - pattern: java.nio.file.Files.newInputStream($P, ...)
+          - pattern: java.nio.file.Files.readAllBytes($P, ...)
+          - pattern: java.nio.file.Files.readString($P, ...)
+          - pattern: java.nio.file.Files.lines($P, ...)
+          # 일반적인 스트림/리더 read 계열 (타입 불문 ULTRA)
+          - pattern: $IS.read(...)
+          - pattern: $BR.readLine()
+          - pattern: $DIS.readUTF()
+          - pattern: new java.io.BufferedInputStream($IS)
+          - pattern: new java.io.DataInputStream($IS)
+
+          # ---------- Properties / 설정 / 리소스 번들 ----------
+          - pattern: $PROPS.getProperty($K)
+          - pattern: java.util.ResourceBundle.getBundle(...).getString($K)
+
+          # ---------- HTTP SERVER: Servlet / Spring MVC 등 ----------
+          # HttpServletRequest 유사 인터페이스 전반 (변수명 $REQ, 타입 미지정)
+          - pattern: $REQ.getParameter($K)
+          - pattern: $REQ.getParameterValues($K)
+          - pattern: $REQ.getParameterMap()
+          - pattern: $REQ.getQueryString()
+          - pattern: $REQ.getHeader($K)
+          - pattern: $REQ.getHeaders($K)
+          - pattern: $REQ.getHeaderNames()
+          - pattern: $REQ.getCookies()
+          - pattern: $REQ.getInputStream()
+          - pattern: $REQ.getReader()
+          - pattern: $REQ.getAttribute($K)
+          - pattern: $REQ.getRequestURI()
+          - pattern: $REQ.getRequestURL()
+
+          # ---------- JAX-RS (Jersey / RESTEasy 등) ----------
+          - pattern: $REQCTX.getHeaderString($K)
+          - pattern: $URIINFO.getQueryParameters().getFirst($K)
+          - pattern: $URIINFO.getQueryParameters().get($K)
+          - pattern: $URIINFO.getPathParameters().getFirst($K)
+          - pattern: $URIINFO.getPathParameters().get($K)
+
+          # ---------- Spring WebFlux / Reactive ServerRequest ----------
+          - pattern: $SREQ.queryParam($K)
+          - pattern: $SREQ.pathVariable($K)
+          - pattern: $SREQ.headers().header($K)
+          - pattern: $SREQ.cookies().get($K)
+          - pattern: $SREQ.cookies().getFirst($K)
+
+          # ---------- (간단 HTTP 프레임워크들 예: SparkJava, etc.) ----------
+          - pattern: $SREQ.queryParams($K)
+          - pattern: $SREQ.params($K)
+          - pattern: $SREQ.headers($K)
+          - pattern: $SREQ.body()
+
+          # ---------- HTTP CLIENT responses ----------
+          # java.net.http.HttpClient / Response
+          - pattern: $RESP.body()
+          # Apache HttpClient
+          - pattern: $ENTITY.getContent()
+          - pattern: org.apache.http.util.EntityUtils.toString($ENTITY, ...)
+          - pattern: org.apache.http.util.EntityUtils.toByteArray($ENTITY, ...)
+          # Spring RestTemplate / WebClient / WebFlux ResponseEntity
+          - pattern: $RESP.getBody()
+          # OkHttp 스타일 응답 본문
+          - pattern: $BODY.string()
+          - pattern: $BODY.bytes()
+          - pattern: $BODY.byteStream()
+
+          # ---------- DB / ORM 결과 (DB 도 외부로 간주) ----------
+          - pattern: $RS.getString(...)
+          - pattern: $RS.getObject(...)
+          - pattern: $RS.getInt(...)
+          - pattern: $RS.getLong(...)
+          - pattern: $RS.getBytes(...)
+          # Row 객체 등 래퍼
+          - pattern: $ROW.get(...)
+          - pattern: $ROW.getString(...)
+
+          # ---------- Message / MQ / Kafka / JMS / Spring Messaging ----------
+          - pattern: $MSG.getBody(...)
+          - pattern: $RECORD.value()
+          - pattern: $RECORD.key()
+          # JMS Message
+          - pattern: $JMS_TEXT.getText()
+          - pattern: $JMS_BYTES.readBytes(...)
+          - pattern: $JMS_OBJ.getObject()
+          # Spring Messaging / AMQP
+          - pattern: $SMESSAGE.getPayload()
+          - pattern: $AMQPMESSAGE.getBody()
+
+          # ---------- JSON / XML / Structured loaders (Python json/yaml load 대응) ----------
+          # Jackson
+          - pattern: $MAPPER.readValue($SRC, $T)
+          # Gson
+          - pattern: $GSON.fromJson($SRC, $T)
+          - pattern: $GSON.fromJson($READER, $T)
+          # org.json
+          - pattern: new org.json.JSONObject($SRC)
+          - pattern: new org.json.JSONArray($SRC)
+          # SnakeYAML
+          - pattern: $YAML.load($SRC)
+          - pattern: $YAML.loadAs($SRC, $T)
+
+          # XML / DOM
+          - pattern: $XMLDOC.getDocumentElement()
+          - pattern: $NODE.getTextContent()
+          - pattern: $ELEM.getAttribute($K)
+
+          # ---------- Deserialization ----------
+          - pattern: new java.io.ObjectInputStream($IS).readObject()
+          - pattern: $OIS.readObject()
+          - pattern: new java.beans.XMLDecoder($IS).readObject()
+          - pattern: $XDEC.readObject()
+
+          # ---------- Generic sockets / raw network ----------
+          - pattern: $SOCK.getInputStream()
+          - pattern: $SOCK.getChannel()
+          - pattern: $SOCK.recv(...)
+          - pattern: $SOCK.recvfrom(...)
+
+          # ---------- ULTRA-BOOST: 컨테이너/래퍼 접근 전부 ----------
+          # Map / List / 배열 / Optional / Iterator / Enumeration
+          - pattern: $MAP.get(...)
+          - pattern: $LIST.get(...)
+          - pattern: $ARR[$I]
+          - pattern: $OPT.get()
+          - pattern: $ENUM.nextElement()
+          - pattern: $ITER.next()
+          # generic get (Python ULTRA 의 $OBJ.get(...) 대응)
+          - pattern: $OBJ.get($K)
+
+          # ================================================
+          # Spring 애너테이션 기반 파라미터 (no-arg 애너테이션)
+          # ================================================
+          - patterns:
+              - pattern-inside: |
+                  $RET $METHOD(..., @$ANN $TYPE $SRC, ...) {
+                    ...
+                  }
+              - focus-metavariable: $SRC
+              - metavariable-regex:
+                  metavariable: $ANN
+                  regex: ".*(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart|MatrixVariable|SessionAttribute)"
+
+          # ================================================
+          # Spring 애너테이션 기반 파라미터 (애너테이션에 인자 있는 경우)
+          #   예: @RequestParam("id") String id
+          # ================================================
+          - patterns:
+              - pattern-inside: |
+                  $RET $METHOD(..., @$ANN(...) $TYPE $SRC, ...) {
+                    ...
+                  }
+              - focus-metavariable: $SRC
+              - metavariable-regex:
+                  metavariable: $ANN
+                  regex: ".*(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart|MatrixVariable|SessionAttribute)"
+
+    # -------------------------------------------------
+    # SINKS: "아무 호출이나" 다 잡기
+    # -------------------------------------------------
+    pattern-sinks:
+      - patterns:
+          # foo(tainted, ...)
+          - pattern: $FUNC($TAINT, ...)
+
+      - patterns:
+          # obj.foo(tainted, ...)
+          - pattern: $OBJ.$FUNC($TAINT, ...)
+
+      - patterns:
+          # new Foo(tainted, ...)
+          - pattern: new $FUNC($TAINT, ...)
+
+    metadata:
+      category: security, taint
+      technology: [java]
+      notes: >
+        ULTRA: sanitizers / sink 예외 전혀 두지 않고,
+        가능한 모든 외부/비신뢰 입력 지점을 source 로 취급.
+        python py-taint-ultra-any-input-into-any-call 룰과 개념적으로 대응.

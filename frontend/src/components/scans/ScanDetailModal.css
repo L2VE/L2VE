@@ -1,0 +1,60 @@
+.scan-detail-surface {
+  transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease;
+}
+
+.scan-detail-dark {
+  background-color: #030712;
+  color: #e5e7eb;
+}
+
+.scan-detail-dark .scan-detail-header {
+  background-color: rgba(15, 23, 42, 0.85);
+  border-bottom-color: rgba(148, 163, 184, 0.35);
+}
+
+.scan-detail-dark .scan-detail-tabs {
+  border-bottom-color: rgba(148, 163, 184, 0.35);
+}
+
+.scan-detail-dark .bg-white,
+.scan-detail-dark .bg-gray-50,
+.scan-detail-dark .bg-gray-100 {
+  background-color: rgba(15, 23, 42, 0.9) !important;
+  color: #e5e7eb;
+}
+
+.scan-detail-dark .border-gray-100,
+.scan-detail-dark .border-gray-200,
+.scan-detail-dark .border-gray-300,
+.scan-detail-dark .border-indigo-200 {
+  border-color: rgba(148, 163, 184, 0.35) !important;
+}
+
+.scan-detail-dark .text-gray-900,
+.scan-detail-dark .text-gray-800,
+.scan-detail-dark .text-gray-700 {
+  color: #f8fafc !important;
+}
+
+.scan-detail-dark .text-gray-600,
+.scan-detail-dark .text-gray-500,
+.scan-detail-dark .text-gray-400 {
+  color: #cbd5f5 !important;
+}
+
+.scan-detail-dark .shadow-sm,
+.scan-detail-dark .shadow-md,
+.scan-detail-dark .shadow-lg {
+  box-shadow: 0 10px 35px rgba(2, 6, 23, 0.55) !important;
+}
+
+.scan-detail-dark .diff-viewer {
+  color: #e2e8f0;
+}
+
+.scan-detail-dark .diff-viewer table,
+.scan-detail-dark .diff-viewer tbody,
+.scan-detail-dark .diff-viewer tr,
+.scan-detail-dark .diff-viewer td {
+  background-color: transparent !important;
+}

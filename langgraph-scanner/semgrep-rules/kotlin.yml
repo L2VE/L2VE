@@ -1,0 +1,160 @@
+rules:
+  # 1) 일반 HTTP 요청 관련 모든 입력 지점
+  - id: ktor-user-input-http
+    languages: [kotlin]
+    message: |
+      [Ktor] HTTP 요청으로부터의 사용자 입력 지점입니다. (ApplicationCall / ApplicationRequest)
+    severity: INFO
+    metadata:
+      category: user-input
+      framework: ktor
+      kind: source
+      input_types:
+        - path
+        - query
+        - header
+        - cookie
+        - body
+        - session
+        - principal
+    pattern-either:
+      # --- ApplicationCall 레벨: call.xxx ---
+      # call.request 전체 (uri, method, path, headers, cookies 등 전반적인 요청 정보) :contentReference[oaicite:0]{index=0}
+      - pattern: $CALL.request
+
+      # 경로 파라미터: call.parameters["id"] 등 :contentReference[oaicite:1]{index=1}
+      - pattern: $CALL.parameters
+
+      # Body 수신 (raw / 객체 / form / multipart 전부) :contentReference[oaicite:2]{index=2}
+      - pattern: $CALL.receive(...)
+      - pattern: $CALL.receiveText()
+      - pattern: $CALL.receiveChannel()
+      - pattern: $CALL.receiveStream()
+      - pattern: $CALL.receiveParameters()
+      - pattern: $CALL.receiveMultipart(...)
+      - pattern: $CALL.receiveOrNull(...)
+
+      # 세션 / 인증 정보 (쿠키·헤더 기반 세션, principal) :contentReference[oaicite:3]{index=3}
+      - pattern: $CALL.sessions.get(...)
+      - pattern: $CALL.principal(...)
+
+      # --- ApplicationRequest 레벨: 보통 call.request.xxx 형태 ---
+      # Query string / query parameters :contentReference[oaicite:4]{index=4}
+      - pattern: $REQ.queryParameters
+      - pattern: $REQ.queryString(...)
+
+      # URI / path / method / version / host / port / origin 등 연결 정보 :contentReference[oaicite:5]{index=5}
+      - pattern: $REQ.uri
+      - pattern: $REQ.path(...)
+      - pattern: $REQ.document(...)
+      - pattern: $REQ.httpMethod
+      - pattern: $REQ.httpVersion
+      - pattern: $REQ.host(...)
+      - pattern: $REQ.port(...)
+      - pattern: $REQ.origin
+      - pattern: $REQ.local
+
+      # --- Headers 관련 (일반 headers + 편의 메서드 전부) :contentReference[oaicite:6]{index=6} ---
+      - pattern: $REQ.headers
+      - pattern: $REQ.header(...)
+      - pattern: $REQ.contentType(...)
+      - pattern: $REQ.contentCharset(...)
+      - pattern: $REQ.authorization(...)
+      - pattern: $REQ.location(...)
+      - pattern: $REQ.accept(...)
+      - pattern: $REQ.acceptItems(...)
+      - pattern: $REQ.acceptEncoding(...)
+      - pattern: $REQ.acceptEncodingItems(...)
+      - pattern: $REQ.acceptLanguage(...)
+      - pattern: $REQ.acceptLanguageItems(...)
+      - pattern: $REQ.acceptCharset(...)
+      - pattern: $REQ.acceptCharsetItems(...)
+      - pattern: $REQ.userAgent(...)
+      - pattern: $REQ.cacheControl(...)
+      - pattern: $REQ.ranges(...)
+      - pattern: $REQ.isChunked(...)
+      - pattern: $REQ.isMultipart(...)
+
+      # --- Cookies (request.cookies["name"]) :contentReference[oaicite:7]{index=7} ---
+      - pattern: $REQ.cookies
+
+  # 2) WebSocket에서 들어오는 모든 메시지 관련 입력 지점
+  - id: ktor-user-input-websocket
+    languages: [kotlin]
+    message: |
+      [Ktor] WebSocket으로부터의 사용자 입력 지점입니다. (incoming / Frame.*)
+    severity: INFO
+    metadata:
+      category: user-input
+      framework: ktor
+      kind: source
+      input_types:
+        - websocket
+    pattern-either:
+      # 기본: incoming.receive()로 프레임 하나 받기 :contentReference[oaicite:8]{index=8}
+      - pattern: incoming.receive(...)
+
+      # Flow 기반 처리: incoming.receiveAsFlow(), incoming.consumeAsFlow() :contentReference[oaicite:9]{index=9}
+      - pattern: incoming.receiveAsFlow(...)
+      - pattern: incoming.consumeAsFlow(...)
+
+      # 전형적인 for (frame in incoming) 패턴 :contentReference[oaicite:10]{index=10}
+      - pattern: for ($FRAME in incoming) { ... }
+
+      # Frame.Text / Frame.Binary payload 추출 (readText / readBytes) :contentReference[oaicite:11]{index=11}
+      - pattern: $FRAME.readText(...)
+      - pattern: $FRAME.readBytes(...)
+
+  # 3) Type-safe routing(Resources)에서 전달되는 리소스 객체/필드 접근
+  #    get<Article> { article -> ... } 이런 형태에서 article 및 article.id 등 사용 지점
+  - id: ktor-user-input-resources
+    languages: [kotlin]
+    message: |
+      [Ktor] Resources(type-safe routing)에서 전달된 사용자 입력 객체/필드입니다.
+    severity: INFO
+    metadata:
+      category: user-input
+      framework: ktor
+      kind: source
+      input_types:
+        - typed-resource
+    pattern-either:
+      # get<Resource> { resource -> ... }
+      - patterns:
+          - pattern-inside: |
+              get<$R>(...) { $RES -> ... }
+          - pattern: $RES
+      - patterns:
+          - pattern-inside: |
+              get<$R>(...) { $RES -> ... }
+          - pattern: $RES.$FIELD
+
+      # post<Resource> { resource -> ... }
+      - patterns:
+          - pattern-inside: |
+              post<$R>(...) { $RES -> ... }
+          - pattern: $RES
+      - patterns:
+          - pattern-inside: |
+              post<$R>(...) { $RES -> ... }
+          - pattern: $RES.$FIELD
+
+      # put<Resource> { resource -> ... }
+      - patterns:
+          - pattern-inside: |
+              put<$R>(...) { $RES -> ... }
+          - pattern: $RES
+      - patterns:
+          - pattern-inside: |
+              put<$R>(...) { $RES -> ... }
+          - pattern: $RES.$FIELD
+
+      # delete<Resource> { resource -> ... }
+      - patterns:
+          - pattern-inside: |
+              delete<$R>(...) { $RES -> ... }
+          - pattern: $RES
+      - patterns:
+          - pattern-inside: |
+              delete<$R>(...) { $RES -> ... }
+          - pattern: $RES.$FIELD

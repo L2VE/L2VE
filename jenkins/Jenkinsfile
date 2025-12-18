@@ -1,0 +1,863 @@
+// Progress reporter (used inside script blocks)
+def reportProgress = { stageName, status, message, percent ->
+    def percentLine = percent != null ? "\"progress_percent\": ${percent}" : "\"progress_percent\": null"
+    def payload = """{
+  "stage": "${stageName}",
+  "status": "${status}",
+  "message": "${message}",
+  ${percentLine}
+}"""
+    def cmd = """
+        cat > progress_payload.json <<'EOF'
+${payload}
+EOF
+        curl -sS -X PATCH "${params.API_BASE}/projects/${params.PROJECT_ID}/scans/${params.SCAN_ID}/progress" \\
+            -H "Content-Type: application/json" \\
+            -H "X-Api-Key: ${env.BACKEND_SERVICE_API_KEY}" \\
+            -H "X-Jenkins-Token: ${env.JENKINS_CALLBACK_SECRET}" \\
+            --data @progress_payload.json || true
+    """
+    try {
+        sh label: "report-progress-${stageName}", script: cmd
+    } catch (ignored) {
+        // 무시
+    }
+}
+
+// Email notifier (runs only when NOTIFY_EMAILS is provided)
+def sendEmailNotification = { statusText, extraMessage = "" ->
+    def recipients = params.NOTIFY_EMAILS?.trim()
+    if (!recipients) {
+        return
+    }
+    def projectLabel = env.PROJECT_NAME ?: params.PROJECT_NAME ?: params.GITHUB_URL ?: "project"
+    def subject = "[L2VE] Scan ${projectLabel} #${BUILD_NUMBER} ${statusText}"
+    def body = """<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f7fa; padding:24px;">
+  <tbody><tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden;">
+
+        
+        <tbody><tr><td style="background-color:#0f172a; padding:20px 24px;                     font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',                     'Noto Sans KR','Malgun Gothic',Arial,sans-serif;">
+            <span style="font-size:18px; color:#ffffff; font-weight:600;">
+              🔐 L2VE 스캔 완료 알림
+            </span>
+          </td></tr>
+
+        
+        <tr><td style="padding:24px;                     font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',                     'Noto Sans KR','Malgun Gothic',Arial,sans-serif;                     color:#1f2937;">
+            <p style="margin:0 0 16px 0; font-size:14px; line-height:1.6;">
+              안녕하세요,
+            </p>
+
+            <p style="margin:0 0 20px 0; font-size:14px; line-height:1.6;">
+              L2VE 보안 스캔이 <strong>완료</strong>되었습니다.<br>
+              자세한 정보는 아래를 확인해 주세요.
+            </p>
+
+            
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
+              <tbody><tr><td style="padding:16px;">
+                  <p style="margin:0 0 12px 0; font-size:14px; font-weight:600;">
+                    📌 스캔 결과
+                  </p>
+
+                  <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px; color:#374151;">
+                    <tbody><tr><td style="padding:6px 0; width:120px;">프로젝트</td><td style="padding:6px 0;">${projectLabel}</td></tr>
+                    <tr><td style="padding:6px 0;">스캔 ID</td><td style="padding:6px 0;">${params.SCAN_ID}</td></tr>
+                    <tr><td style="padding:6px 0;">상태</td><td style="padding:6px 0; font-weight:700; color:#16a34a;">
+${statusText}
+                      </td></tr>
+                    <tr><td style="padding:6px 0;">빌드 번호</td><td style="padding:6px 0;">#${BUILD_NUMBER}</td></tr>
+                  </tbody></table>
+                </td></tr>
+            </tbody></table>
+
+            <p style="margin:20px 0 0 0; font-size:12px; color:#6b7280;">
+              본 메일은 L2VE 플랫폼에 의해 자동으로 발송되었습니다.
+            </p>
+          </td></tr>
+
+        
+        <tr><td style="background-color:#f3f4f6; padding:12px 24px;                     font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',                     'Noto Sans KR','Malgun Gothic',Arial,sans-serif;                     font-size:12px; color:#6b7280;">
+            L2VE: LLM to Vulnerabilities &amp; Exploits
+          </td></tr>
+
+      </tbody></table>
+    </td></tr>
+</tbody></table>"""
+
+    try {
+        emailext(
+            to: recipients,
+            subject: subject,
+            body: body,
+            mimeType: 'text/html; charset=UTF-8',
+        )
+    } catch (ignored) {
+        echo "⚠ 이메일 발송에 실패했습니다: ${ignored}"
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '10'))
+        timeout(time: 24, unit: 'HOURS')
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        choice(name: 'SOURCE_TYPE', choices: ['git', 'upload'], description: 'git=Git Repository, upload=ZIP File Upload')
+        string(name: 'GITHUB_URL', defaultValue: '', description: 'GitHub 저장소 URL (SOURCE_TYPE=git일 때 사용)')
+        string(name: 'UPLOADED_FILE_PATH', defaultValue: '', description: '업로드된 ZIP 파일 경로 (SOURCE_TYPE=upload일 때 사용)')
+        string(name: 'PROJECT_NAME', defaultValue: '', description: '프로젝트 이름')
+        choice(name: 'SCAN_TYPE', choices: ['ALL', 'SSRF', 'RCE', 'XSS', 'SQLi', 'IDOR', 'PATH_TRAVERSAL', 'AUTH'], description: '스캔 타입')
+        // 자유 입력으로 받아 다양한 LLM 제공자를 지원 (예: groq, openai, azure-openai 등)
+        string(name: 'API_PROVIDER', defaultValue: 'groq', description: 'LLM API 제공자 (예: groq, openai, azure-openai 등)')
+        string(name: 'MODEL', defaultValue: 'gpt-4o', description: 'LLM 모델 (예: qwen/qwen3-32b, llama-3.3-70b-versatile, gpt-4o 등)')
+        booleanParam(name: 'RUN_SAST', defaultValue: true, description: 'Semgrep SAST 실행 여부')
+        choice(name: 'SCAN_MODE', choices: ['custom', 'preset'], description: 'custom=Full Scan, preset=Quick Scan')
+        choice(name: 'PROFILE_MODE', choices: ['preset', 'custom'], description: 'preset=기본 설정, custom=고급 설정')
+        string(name: 'PROJECT_ID', defaultValue: '1', description: 'L2VE 백엔드 project_id')
+        string(name: 'SCAN_ID', defaultValue: '0', description: 'L2VE 백엔드 scan_id')
+        choice(name: 'TRIGGER_MODE', choices: ['web', 'git'], description: 'web=웹 UI 수동 스캔, git=Git webhook 자동 스캔')
+        string(name: 'API_BASE', defaultValue: 'http://backend:3000/api', description: 'L2VE 백엔드 API Base')
+        string(name: 'BACKEND_SERVICE_API_KEY', defaultValue: '', description: '백엔드 고정 API Key')
+        string(name: 'JENKINS_CALLBACK_SECRET', defaultValue: '', description: '백엔드 콜백 시크릿')
+        string(name: 'LLM_ENDPOINT_URL', defaultValue: '', description: '옵션: 커스텀 LLM 엔드포인트 URL')
+        string(name: 'LLM_API_KEY', defaultValue: '', description: '옵션: 커스텀 LLM API Key/Token')
+        string(name: 'SEED_FILE_PATH', defaultValue: '', description: 'SARIF/Diet seed file path for verifier (quick mode)')
+        string(name: 'AWS_BEDROCK_RPM',defaultValue: '30', description: 'AWS Bedrock 요청 제한 (분당 요청 수, 기본 30)')
+        string(name: 'AWS_BEDROCK_TPM',defaultValue: '10000', description: 'AWS Bedrock 분당 토큰 제한 (기본 10,000)')
+        string(name: 'NOTIFY_EMAILS', defaultValue: '', description: '스캔 완료/실패 알림 수신자 (콤마 구분)')
+    }
+
+    environment {
+        SCANNER_DIR = '/var/jenkins_home/langgraph-scanner'
+        QUICK_SCAN_DIR = '/var/jenkins_home/langgraph-scan'
+        PROJECTS_DIR = '/var/jenkins_home/projects'
+        GROQ_API_KEY = credentials('groq-api-key')
+        OPENAI_API_KEY = credentials('openai-api-key')
+        LANGCHAIN_API_KEY = credentials('langsmith-api-key')
+        OPENROUTER_API_KEY = credentials('openrouter-api-key')
+        GITHUB_TOKEN = credentials('github-token')
+        AWS_BEARER_TOKEN_BEDROCK = credentials('bedrock-api-key')
+        BEDROCK_AWS_REGION = credentials('bedrock-aws-region')
+        OPENAI_COMPATIBLE_BASE_URL = "${params.LLM_ENDPOINT_URL ?: ''}"
+        OPENAI_COMPATIBLE_API_KEY  = "${params.LLM_API_KEY   ?: ''}"
+        AWS_BEDROCK_RPM = "${params.AWS_BEDROCK_RPM ?: '60'}"
+        AWS_BEDROCK_TPM = "${params.AWS_BEDROCK_TPM ?: '60000'}"
+        BACKEND_SERVICE_API_KEY = credentials('backend-api-key')
+        JENKINS_CALLBACK_SECRET = credentials('jenkins-callback-secret')
+    }
+
+    stages {
+        stage('Validate Input') {
+            steps {
+                script {
+                    reportProgress("setup", "running", "입력 검증", 5)
+                    echo "빌드 번호: ${BUILD_NUMBER}"
+                    echo "스캔 모드: ${params.SCAN_MODE} (${params.SCAN_MODE == 'custom' ? 'Full Scan (langgraph-scanner)' : 'Quick Scan (langgraph-scan)'})"
+                    echo "스캔 타입: ${params.SCAN_TYPE}"
+
+                    // 프로젝트 이름 설정
+                    if (params.SOURCE_TYPE == 'git' && params.GITHUB_URL) {
+                        env.PROJECT_NAME = params.GITHUB_URL.tokenize('/')[-1].replace('.git', '')
+                    } else if (params.PROJECT_NAME) {
+                        env.PROJECT_NAME = params.PROJECT_NAME
+                    } else {
+                        error("프로젝트 이름을 확인할 수 없습니다.")
+                    }
+
+                    env.PROJECT_PATH = "${PROJECTS_DIR}/${env.PROJECT_NAME}"
+                    echo "프로젝트: ${env.PROJECT_NAME}"
+                    echo "프로젝트 경로: ${env.PROJECT_PATH}"
+                    reportProgress("setup", "completed", "입력 검증 완료", 10)
+                }
+            }
+        }
+
+        stage('Setup Scanner Environment') {
+            steps {
+                script {
+                    reportProgress("setup", "running", "스캐너 환경 설정", 20)
+                    // Full Scan용 langgraph-scanner 설정
+                    sh '''
+                        set -e
+                        apt-get update
+                        apt-get install -y vim
+                        if ! command -v node >/dev/null 2>&1; then
+                            apt-get update && apt-get install -y nodejs npm
+                        fi
+                        node -v || true
+                        cd $SCANNER_DIR
+                        if [ ! -d venv ]; then
+                            python3 -m venv venv
+                        fi
+                        . venv/bin/activate
+                        pip install -r requirements.txt --quiet
+                        
+                        # .env 파일 생성
+                        cat > .env << EOF
+GROQ_API_KEY=${GROQ_API_KEY}
+OPENAI_API_KEY=${OPENAI_API_KEY}
+LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+MCP_SERVER_URL=http://localhost:9121/mcp
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK}
+BEDROCK_AWS_REGION=${BEDROCK_AWS_REGION}
+AWS_BEDROCK_RPM=${AWS_BEDROCK_RPM}
+AWS_BEDROCK_TPM=${AWS_BEDROCK_TPM}
+MAX_FAILED_RETRIES=3  # 실패한 배치 재시도 안 함
+
+OPENAI_RPM=100000
+OPENAI_TPM=100000000
+
+# Agent Configuration for OpenRouter (qwen3-235b-a22b-2507)
+AGENT_RECURSION_LIMIT=500    # 그래프 최대 반복 횟수
+AGENT_MAX_TOOL_CALLS=50      # 배치당 최대 도구 호출 횟수
+
+DISCOVERY_TOOL_ONLY_RETRY_LIMIT=50  # 도구 전용 시도 최대 횟수
+
+MAX_CHUNK_SIZE=3000  # Maximum JSON string length per chunk (reduced for large prompts)
+MAX_ANSWER_CHARS=50000  # MCP tool max answer chars
+
+
+# # Agent Configuration for llama-server (qwen3-30b-a3b-thinking-2507)
+# AGENT_RECURSION_LIMIT=500    # 그래프 최대 반복 횟수
+# AGENT_MAX_TOOL_CALLS=20      # 배치당 최대 도구 호출 횟수
+
+# DISCOVERY_TOOL_ONLY_RETRY_LIMIT=20  # 도구 전용 시도 최대 횟수
+
+# MAX_CHUNK_SIZE=500  # Maximum JSON string length per chunk (reduced for large prompts)
+# MAX_ANSWER_CHARS=100000  # MCP tool max answer chars
+
+DISCOVERY_MAX_WORKERS=4  # Discovery agent 병렬 작업자 수
+
+# Default number of analysis workers per vulnerability type (min 1)
+ANALYSIS_WORKERS_DEFAULT=1
+
+# 특정 유형만 병렬처리 작업자 수 설정
+# Override worker counts per type: format LABEL=count, comma-separated (e.g., XSS=2,SSRF=3)
+# ANALYSIS_WORKER_OVERRIDES=""
+
+# Max retries per worker when analysis fails (0 means no retry)
+ANALYSIS_WORKER_MAX_RETRIES=0
+
+
+# ANALYSIS_MAX_CONCURRENT_AGENTS=2  # 분석 에이전트 동시 실행 수 제한
+# DISCOVERY_MAX_WORKERS=2  # Discovery agent 병렬 작업자 수
+EOF
+                        
+                        # results 디렉토리 생성
+                        mkdir -p analysis_results
+                    '''
+
+                    // Quick Scan용 langgraph-scan 설정 (SCAN_MODE가 preset일 때만)
+                    if (params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom') {
+                        sh '''
+                            set -e
+                            cd $QUICK_SCAN_DIR
+                            if [ ! -d venv ]; then
+                                python3 -m venv venv
+                            fi
+                            . venv/bin/activate
+                            pip install -r requirements.txt --quiet
+
+                            # .env 파일 생성
+                            cat > .env << EOF
+GROQ_API_KEY=${GROQ_API_KEY}
+OPENAI_API_KEY=${OPENAI_API_KEY}
+LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+MCP_SERVER_URL=http://localhost:8000/mcp
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK}
+BEDROCK_AWS_REGION=${BEDROCK_AWS_REGION}
+AWS_BEDROCK_RPM=${AWS_BEDROCK_RPM}
+AWS_BEDROCK_TPM=${AWS_BEDROCK_TPM}
+EOF
+                            
+                            # results 디렉토리 생성
+                            mkdir -p results
+                        '''
+                    }
+                    reportProgress("setup", "completed", "스캐너 환경 설정 완료", 30)
+                }
+            }
+        }
+
+        stage('Clone Target Project') {
+            when {
+                expression { params.SOURCE_TYPE == 'git' }
+            }
+            steps {
+                script {
+                    reportProgress("checkout", "running", "Git 리포지토리 클론", 40)
+                    sh """
+                        set -e
+                        rm -rf ${PROJECT_PATH}
+                        mkdir -p ${PROJECTS_DIR}
+                        cd ${PROJECTS_DIR}
+                        
+                        if [ -n "${GITHUB_TOKEN}" ]; then
+                            git clone https://${GITHUB_TOKEN}@\$(echo ${params.GITHUB_URL} | sed 's|https://||') ${PROJECT_NAME}
+                        else
+                            git clone ${params.GITHUB_URL} ${PROJECT_NAME}
+                        fi
+                        
+                        echo "✓ 프로젝트 클론 완료: ${PROJECT_PATH}"
+                    """
+                    reportProgress("checkout", "completed", "Git 리포지토리 클론 완료", 45)
+                }
+            }
+        }
+
+        stage('Extract Uploaded File') {
+            when {
+                expression { params.SOURCE_TYPE == 'upload' }
+            }
+            steps {
+                script {
+                    reportProgress("checkout", "running", "ZIP 압축 해제", 40)
+                    sh """
+                        set -e
+                        rm -rf ${PROJECT_PATH}
+                        mkdir -p ${PROJECT_PATH}
+                        unzip -q ${params.UPLOADED_FILE_PATH} -d ${PROJECT_PATH}
+                        # 만약 압축 해제된 디렉토리에 단 하나의 하위 디렉토리만 존재한다면, 그 하위 디렉토리의 내용물을 상위 디렉토리로 이동시키고 하위 디렉토리를 삭제합니다.
+                        if [ \$(ls -1 ${PROJECT_PATH} | wc -l) -eq 1 ]; then
+                            inner_dir=\$(ls -1 ${PROJECT_PATH})
+                            if [ -d "${PROJECT_PATH}/\${inner_dir}" ]; then
+                                mv ${PROJECT_PATH}/\${inner_dir}/* ${PROJECT_PATH}/
+                                rm -rf ${PROJECT_PATH}/\${inner_dir}
+                            fi
+                        fi
+                        echo "✓ ZIP 파일 압축 해제 완료: ${PROJECT_PATH}"
+                    """
+                    reportProgress("checkout", "completed", "ZIP 압축 해제 완료", 45)
+                }
+            }
+        }
+
+        stage('Detect Project Language & Env (Quick)') {
+            when {
+                allOf {
+                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom' }
+                }
+            }
+            steps {
+                script {
+                    echo "========"
+                    echo "= Detect Project Language"
+                    echo "========"
+                    def detectProjectLang = {
+                        if (fileExists("${PROJECT_PATH}/build.gradle.kts") || fileExists("${PROJECT_PATH}/settings.gradle.kts")) return "kotlin"
+                        if (fileExists("${PROJECT_PATH}/build.gradle") || fileExists("${PROJECT_PATH}/settings.gradle") || fileExists("${PROJECT_PATH}/pom.xml")) return "java"
+                        if (fileExists("${PROJECT_PATH}/package.json") || fileExists("${PROJECT_PATH}/pnpm-lock.yaml") || fileExists("${PROJECT_PATH}/yarn.lock") || fileExists("${PROJECT_PATH}/bun.lockb")) return "javascript"
+                        if (fileExists("${PROJECT_PATH}/pyproject.toml") || fileExists("${PROJECT_PATH}/requirements.txt") || fileExists("${PROJECT_PATH}/Pipfile")) return "python"
+                        def count = [:]
+                        count["kotlin"] = sh(script: "find ${PROJECT_PATH} \\( -name '*.kt' -o -name '*.kts' \\) | wc -l", returnStdout: true).trim().toInteger()
+                        count["java"] = sh(script: "find ${PROJECT_PATH} -name '*.java' | wc -l", returnStdout: true).trim().toInteger()
+                        count["javascript"] = sh(script: "find ${PROJECT_PATH} \\( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.vue' -o -name '*.svelte' \\) | wc -l", returnStdout: true).trim().toInteger()
+                        count["python"] = sh(script: "find ${PROJECT_PATH} -name '*.py' | wc -l", returnStdout: true).trim().toInteger()
+                        def lang = null
+                        def maxVal = -1
+                        count.each { k, v ->
+                            if (v > maxVal) {
+                                maxVal = v
+                                lang = k
+                            }
+                        }
+                        if (!lang || maxVal == 0) {
+                            error "Project Language not detected"
+                        }
+
+                        return lang
+                    }
+
+                    def langDetected = detectProjectLang()
+                    env.PROJECT_LANG = langDetected
+                    echo "Detected PROJECT_LANG=${env.PROJECT_LANG}"
+
+                    if (env.PROJECT_LANG == "javascript") {
+                        echo "Checking Node.js for JS/TS..."
+                        sh """
+                            set -e
+                            if ! command -v node >/dev/null 2>&1; then
+                                apt-get update && apt-get install -y nodejs npm
+                            fi
+                            node -v || true
+                        """
+                    }
+                    if (env.PROJECT_LANG == "java" || env.PROJECT_LANG == "kotlin") {
+                        echo "Checking maven for java/kotlin..."
+                        sh """
+                            set -e
+                            if ! command -v mvn >/dev/null 2>&1; then
+                                apt-get update && apt-get install -y maven 
+                            fi
+                            mvn -v || true
+                        """                       
+                    }                    
+
+                    echo "========"
+                    echo "= Detect Project Language DONE"
+                    echo "========"
+
+                    reportProgress("codeql", "completed", "프로젝트 언어 감지 완료", 50)   
+                }
+            }
+        }
+
+        stage('Select Codeql SUITE (Quick)') {
+            when {
+                allOf {
+                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom' }
+                }
+            }
+            steps {
+                script {
+                    reportProgress("codeql", "running", "CodeQL 번들 선택", 50)
+                    echo "========"
+                    echo "= Select Codeql Suite"
+                    echo "========"                    
+                    def suiteMap = [
+                        "kotlin":      "codeql/java-queries:codeql-suites/java-security-extended.qls",
+                        "java":        "codeql/java-queries:codeql-suites/java-security-extended.qls",
+                        "javascript":  "codeql/javascript-queries:codeql-suites/javascript-security-extended.qls",
+                        "python":      "codeql/python-queries:codeql-suites/python-security-extended.qls"
+                    ]
+
+                    env.CODEQL_SUITE = suiteMap[env.PROJECT_LANG] ?: "codeql/${env.PROJECT_LANG}-security-and-quality"
+                    echo "Detected SUITE=${env.CODEQL_SUITE}"
+
+
+                    echo "========"
+                    echo "= Select Codeql Suite DONE"
+                    echo "========"
+
+                    reportProgress("codeql", "completed", "CodeQL 번들 선택 완료", 55)
+                }
+            }
+        }
+
+        stage('CodeQL Analyze (Quick)') {
+            when {
+                allOf {
+                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom'}
+                }
+            }
+            steps {
+                script {
+                    reportProgress("codeql", "running", "CodeQL 번들 준비 및 SARIF 생성", 60)
+                    def PROJECT_LANG = env.PROJECT_LANG
+                    def CODEQL_SUITE = env.CODEQL_SUITE
+                    echo "========"
+                    echo "= CodeQL Analyze (Quick)"
+                    echo "= lang=${PROJECT_LANG}, suite=${CODEQL_SUITE}"
+                    echo "========"
+
+                    def CODEQL_ROOT = "/var/jenkins_home/tools/codeql"
+                    def CODEQL_BIN = "${CODEQL_ROOT}/codeql"
+                    def CODEQL_BUNDLE_URL = "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.18.2/codeql-bundle-linux64.tar.gz"
+                    def DB_DIR = "/var/jenkins_home/tools/codeql-db-${PROJECT_NAME}"
+                    def SEED_DIR = "${QUICK_SCAN_DIR}/seed/${PROJECT_NAME}"
+                    def SARIF_PATH = "${SEED_DIR}/codeql-results.sarif"
+                    sh """
+                        set -e
+                        mkdir -p "${CODEQL_ROOT}"
+                        if [ ! -x "${CODEQL_BIN}" ]; then
+                            echo "Downloading CodeQL bundle..."
+                            curl -sSL "${CODEQL_BUNDLE_URL}" -o /tmp/codeql-bundle.tgz
+                            tar -xzf /tmp/codeql-bundle.tgz -C "${CODEQL_ROOT}" --strip-components=1
+                            rm /tmp/codeql-bundle.tgz
+                        fi
+
+                        rm -rf "${DB_DIR}"
+                        """
+                        if (env.PROJECT_LANG == "javascript" || env.PROJECT_LANG == "python") {
+                            sh """
+                                "${CODEQL_BIN}" database create "${DB_DIR}" --language=${PROJECT_LANG} --source-root "${PROJECT_PATH}"
+                                """
+                        }
+                        else if (env.PROJECT_LANG == "java" || env.PROJECT_LANG == "kotlin") {
+                            sh  """
+                                "${CODEQL_BIN}" database create "${DB_DIR}" --language=java --source-root "${PROJECT_PATH}" --build-mode=none
+                                """
+                        }
+                        sh """
+                        mkdir -p "${SEED_DIR}"
+
+                        "${CODEQL_BIN}" database analyze "${DB_DIR}" ${CODEQL_SUITE} --format=sarifv2.1.0 --sarif-add-snippets --output "${SARIF_PATH}" --download
+
+                        cd $QUICK_SCAN_DIR
+                        . venv/bin/activate
+
+                        python3 "${QUICK_SCAN_DIR}/diet.py" --input "${SARIF_PATH}" --output "${SEED_DIR}/codeql-results-diet.json"
+                    """
+                    env.SEED_FILE_PATH = "${SEED_DIR}/codeql-results-diet.json"
+                    reportProgress("codeql", "completed", "CodeQL SARIF 생성 완료", 65)
+                }
+            }
+        }
+
+        stage('Start Serena MCP Server (Discovery)') {
+            when {
+                anyOf {
+                    expression { params.SCAN_MODE == 'custom' }
+                    expression { params.SCAN_MODE == 'preset' }
+                }
+            }
+            steps {
+                script {
+                    reportProgress("mcp", "running", "MCP 서버 시작", 70)
+                    sh """
+                        set -e
+                        cd $SCANNER_DIR
+                        if [ ! -d venv ]; then
+                            python3 -m venv venv
+                        fi
+                        . venv/bin/activate
+
+                        pip install uv
+                        nohup uvx --from git+https://github.com/oraios/serena serena start-mcp-server --project "${PROJECT_PATH}" --transport streamable-http --port 9121 &
+
+                        # MCP 서버 시작
+
+                        # 서버 준비 대기
+                        sleep 10
+                        
+                        # 서버가 실행 중인지 확인
+                        if ps -aux | grep -q serena; then
+                            echo "✓ MCP 서버 시작 완료"
+                        else
+                            echo "⚠ MCP 서버 컨테이너가 시작되지 않았습니다."
+                        fi
+                """
+                    reportProgress("mcp", "completed", "MCP 서버 시작 완료", 75)
+                }
+            }
+        }
+
+        stage('Start Code Indexer Server (Verifier)') {
+            when {
+                expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom'}
+            }
+            steps {
+                script {
+                    reportProgress("mcp", "running", "Code Indexer MCP 서버 시작", 75)
+                    sh """
+                        set -e
+                        apt-get update
+                        apt-get install -y lsof
+                        apt-get install -y universal-ctags ripgrep
+                        
+                        cd ${QUICK_SCAN_DIR}/mcp_server
+                        if [ ! -d venv ]; then
+                            python3 -m venv venv
+                        fi
+                        . venv/bin/activate
+                        pip install -r requirements.txt --quiet
+
+                        cat > .env << EOF
+REPO_ROOT=${PROJECT_PATH}
+HOST=0.0.0.0
+PORT=8000
+DEFAULT_MAX_RESULTS=50
+MAX_BYTES=8192
+DEFAULT_BEFORE=40
+DEFAULT_AFTER=40
+MAX_BEFORE=120
+MAX_AFTER=120
+USE_TREE_SITTER=false
+ALLOWED_EXTS=".py,.js,.jsx,.mjs,.ts,.tsx,.java,.kt,.kts,.md,.txt"
+EOF
+
+                        nohup python3 server.py >/tmp/code-index-mcp.log 2>&1 &
+                        sleep 7
+                        if lsof | grep 8000; then
+                            echo "✓ Code Indexer MCP 서버 시작 완료 (http://localhost:8000/mcp)"
+                        else
+                            echo "⚠ Code Indexer MCP 서버가 시작되지 않았습니다."
+                        fi
+                    """
+                    reportProgress("mcp", "completed", "Code Indexer MCP 서버 시작 완료", 77)
+                }
+            }
+        }
+
+        stage('Run Source Extractor') {
+            when { expression { params.SCAN_MODE == 'custom' && params.RUN_SAST } }
+            agent {
+                docker {
+                    image 'returntocorp/semgrep'
+                }
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+
+                        echo "PROJECT_PATH = ${PROJECT_PATH}"
+                        ls -la "${PROJECT_PATH}" || echo "PROJECT_PATH not found?"
+
+                        # Semgrep Docker 이미지 안에 기본으로 있는 /src 비우고
+                        rm -rf /src
+
+                        # /src -> 실제 프로젝트 디렉토리 로 symlink 생성
+                        ln -s "${PROJECT_PATH}" /src
+                        ln -s "${SCANNER_DIR}"/semgrep-rules /semgrep-rules
+                        cd ${PROJECT_PATH}
+                        semgrep scan --config "/semgrep-rules/" --sarif --sarif-output source-extract.sarif || true
+                    '''
+                    reportProgress("setup", "completed", "Semgrep 소스 추출 완료", 78)
+                }
+            }
+        }
+
+
+        stage('Run Security Analysis') {
+            steps {
+                script {
+                    reportProgress("analysis", "running", "보안 분석 실행", 80)
+                    // 옵션: 커스텀 LLM 엔드포인트/키를 환경변수로 노출 (main.py는 env 기반 설정)
+                    def llmEnvExports = ""
+                    def maskPairs = []
+                    if (params.LLM_ENDPOINT_URL?.trim()) {
+                        llmEnvExports += "export OPENAI_COMPATIBLE_BASE_URL='${params.LLM_ENDPOINT_URL.trim()}'\n"
+                        maskPairs << [var: 'LLM_ENDPOINT_URL', password: params.LLM_ENDPOINT_URL.trim()]
+                    }
+                    if (params.LLM_API_KEY?.trim()) {
+                        llmEnvExports += "export OPENAI_API_KEY='${params.LLM_API_KEY.trim()}'\n"
+                        llmEnvExports += "export OPENAI_COMPATIBLE_API_KEY='${params.LLM_API_KEY.trim()}'\n"
+                        maskPairs << [var: 'LLM_API_KEY', password: params.LLM_API_KEY.trim()]
+                    }
+
+                    def runMasked = { cmd ->
+                        if (maskPairs) {
+                            try {
+                                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: maskPairs]) {
+                                    sh cmd
+                                }
+                            } catch (ignored) {
+                                // 플러그인 미설치 등으로 실패 시 마스킹 없이 실행
+                                sh cmd
+                            }
+                        } else {
+                            sh cmd
+                        }
+                    }
+
+                    if (params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'quick') {
+                        // Quick Scan with langgraph-scan
+                        runMasked('''
+                            set -e
+                            cd $QUICK_SCAN_DIR
+                            . venv/bin/activate
+                            export BUILD_NUMBER=$BUILD_NUMBER
+                            export SCAN_TYPE=$SCAN_TYPE
+                            export API_BASE_URL=http://backend:3000
+''' + llmEnvExports + '''
+
+                            if [ -z "${SEED_FILE_PATH}" ]; then
+                                echo "SEED_FILE_PATH is required for quick scan (verifier)."
+                                exit 1
+                            fi
+
+                            python3 main.py --project $PROJECT_NAME --input-seed-file "${SEED_FILE_PATH}" --provider $API_PROVIDER --model "$MODEL"
+                        ''')
+                    } else if (params.SCAN_MODE == 'custom') {
+                        // Full Scan: verifier(langgraph-scan)와 discovery(langgraph-scanner)를 병렬 실행
+                        parallel failFast: true, verifier: {
+                            runMasked('''
+                                set -e
+                                cd $QUICK_SCAN_DIR
+                                . venv/bin/activate
+                                export BUILD_NUMBER=$BUILD_NUMBER
+                                export SCAN_TYPE=$SCAN_TYPE
+                                export API_BASE_URL=http://backend:3000
+''' + llmEnvExports + '''
+                                if [ -z "${SEED_FILE_PATH}" ]; then
+                                    echo "SEED_FILE_PATH is required for quick scan (verifier)."
+                                    exit 1
+                                fi
+
+                                python3 main.py --project $PROJECT_NAME --input-seed-file "${SEED_FILE_PATH}" --provider $API_PROVIDER --model "$MODEL"
+                            ''')
+                        }, discovery: {
+                            runMasked('''
+                                set -e
+                                cd $SCANNER_DIR
+                                . venv/bin/activate
+                                export BUILD_NUMBER=$BUILD_NUMBER
+                                export SCAN_TYPE=$SCAN_TYPE
+                                export API_BASE_URL=http://backend:3000
+''' + llmEnvExports + '''
+                                currentTimeStrfTime=$(date +"%Y%m%d_%H%M%S")
+                                python3 extract_candidate_from_sarif.py ${PROJECT_PATH}/source-extract.sarif source-extract_${currentTimeStrfTime}.json
+                                ls -al ${PROJECT_PATH}/source-extract.sarif
+                                rm ${PROJECT_PATH}/source-extract.sarif
+                                rm analysis_results/${PROJECT_NAME}_*.json || true
+                                rm discovery_results/${PROJECT_NAME}_*.json || true
+                                python3 main.py --project $PROJECT_NAME --mode full --provider $API_PROVIDER --model "$MODEL" --use-env --ignore-previous-versions --input-seed-source json --input-seed-file source-extract_${currentTimeStrfTime}.json
+                            ''')
+                        }
+                    }
+                    reportProgress("analysis", "completed", "보안 분석 완료", 85)
+                }
+            }
+        }
+
+        stage('Callback Ingest') {
+            steps {
+                script {
+                    reportProgress("upload", "running", "결과 전송", 90)
+                    def discoveryResultFile = "${env.SCANNER_DIR}/analysis_results/${env.PROJECT_NAME}_latest.json"
+                    def verifierResultFile  = "${env.QUICK_SCAN_DIR}/results/${env.PROJECT_NAME}_report_latest.json"
+
+                    sh """
+                        set -e
+                        export SCAN_MODE="${params.SCAN_MODE}"
+                        export DISCOVERY_RESULT_FILE="${discoveryResultFile}"
+                        export VERIFIER_RESULT_FILE="${verifierResultFile}"
+                        export API_PROVIDER="${params.API_PROVIDER}"
+                        export MODEL="${params.MODEL}"
+                        export SCAN_TYPE="${params.SCAN_TYPE}"
+                        export BUILD_NUMBER="${BUILD_NUMBER}"
+
+                        # 결과 JSON을 IngestScanResults 스키마에 맞게 래핑
+                        python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+scan_mode = os.environ.get("SCAN_MODE", "")
+candidate_files = []
+if scan_mode == "preset":
+    candidate_files.append(os.environ.get("VERIFIER_RESULT_FILE"))
+else:
+    candidate_files.extend([
+        os.environ.get("DISCOVERY_RESULT_FILE"),
+        os.environ.get("VERIFIER_RESULT_FILE"),
+    ])
+
+existing_files = [p for p in candidate_files if p and os.path.isfile(p)]
+if not existing_files:
+    print(f"⚠ 결과 파일을 찾을 수 없습니다: {candidate_files}")
+    sys.exit(1)
+
+def extract_vulns(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        if isinstance(data.get("vulnerabilities"), list):
+            return data["vulnerabilities"]
+        structured = data.get("structured_result")
+        if isinstance(structured, dict) and isinstance(structured.get("vulnerabilities"), list):
+            return structured["vulnerabilities"]
+        return [data]
+    return []
+
+all_vulns = []
+for path in existing_files:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        all_vulns.extend(extract_vulns(data))
+    except Exception as exc:
+        print(f"⚠ 결과 파일 로드 실패 ({path}): {exc}")
+
+if not all_vulns:
+    print("⚠ 취약점 데이터를 찾을 수 없습니다.")
+    sys.exit(1)
+
+payload = {
+    "provider": os.environ.get("API_PROVIDER"),
+    "model": os.environ.get("MODEL"),
+    "scan_type": os.environ.get("SCAN_TYPE"),
+    "build_number": os.environ.get("BUILD_NUMBER"),
+    "vulnerabilities": all_vulns,
+    "vulnerability_count": len(all_vulns),
+}
+
+payload.setdefault("status", "completed")
+
+Path("ingest_payload.json").write_text(json.dumps(payload), encoding="utf-8")
+print(f"✓ 병합된 취약점 {len(all_vulns)}건, 사용된 파일: {', '.join(existing_files)}")
+PY
+                        
+                        # 백엔드로 결과 전송
+                        curl -X POST "${params.API_BASE}/projects/${params.PROJECT_ID}/scans/${params.SCAN_ID}/ingest" \\
+                            -H "Content-Type: application/json" \\
+                            -H "X-Api-Key: ${env.BACKEND_SERVICE_API_KEY}" \\
+                            -H "X-Jenkins-Token: ${env.JENKINS_CALLBACK_SECRET}" \\
+                            -d @ingest_payload.json
+                        
+                        echo "✓ 결과 전송 완료"
+                    """
+                    reportProgress("upload", "completed", "결과 전송 완료", 95)
+                }
+            }
+        }
+
+        stage('Archive Results') {
+            steps {
+                script {
+                    reportProgress("retrieve", "running", "결과 아카이빙", 97)
+                    def resultDir = params.SCAN_MODE == 'preset' ? env.QUICK_SCAN_DIR : env.SCANNER_DIR
+                    def resultFile = params.SCAN_MODE == 'preset' ? 
+                        "${resultDir}/results/${env.PROJECT_NAME}_report_latest.json" :
+                        "${resultDir}/analysis_results/${env.PROJECT_NAME}_latest.json"
+
+                    sh """
+                        set -e
+                        # archiveArtifacts는 워크스페이스 내 파일만 아카이브 가능하므로 로컬 results/로 복사
+                        mkdir -p results
+                        cp ${resultFile} results/${env.PROJECT_NAME}_build${BUILD_NUMBER}.json
+                        echo "✓ 결과 아카이빙 완료"
+                    """
+
+                    // 워크스페이스 내부 results/ 아래 JSON 아카이브
+                    dir('results') {
+                        archiveArtifacts artifacts: "**/*.json", allowEmptyArchive: false
+                    }
+                    reportProgress("retrieve", "completed", "결과 아카이빙 완료", 100)
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "파이프라인 종료 (빌드 #${BUILD_NUMBER})"
+
+                // MCP 서버 정리
+                sh '''
+                    # docker stop serena-mcp 2>/dev/null || true
+                    # docker rm serena-mcp 2>/dev/null || true
+                '''
+            }
+        }
+        success {
+            echo "✓ 스캔 성공"
+            script {
+                sendEmailNotification("SUCCESS", "")
+                reportProgress("retrieve", "completed", "파이프라인 성공", 100)
+            }
+        }
+        failure {
+            echo "✗ 스캔 실패"
+            script {
+                sendEmailNotification("FAILED", currentBuild?.result ?: "failed")
+                reportProgress("retrieve", "failed", "파이프라인 실패", 100)
+            }
+        }
+    }
+}
