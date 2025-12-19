@@ -7,7 +7,7 @@
 ## 📚 목차
 ✨ [프로젝트 개요](#overview) · 🧰 [기술 스택](#tech-stack) · 🧩 [시스템 구성](#system) · 🗂️ [프로젝트 구조](#project-structure) · 🚀 [시작하기](#getting-started) · 🐘 [데이터베이스](#database) · 🧾 [API 문서](#api-docs) <br>
 🤖 [Jenkins 통합](#jenkins-integration) · 🧯 [문제 해결](#troubleshooting) · 🧑‍💻 [개발](#development) · ♻️ [백업 및 복구](#backup-restore) · 🛡️ [보안](#security) · 📈 [모니터링](#monitoring) · 🚚 [배포](#deployment) · 📚 [문서](#documents) · 🏷️ [버전](#version) <br>
-📘 [LLM 기반 취약점 분석 가이드라인](#GuideLine)
+📘 [LLM 기반 취약점 분석 가이드라인](#GuideLine) 
 
 <a id="overview"></a>
 ## ✨ 프로젝트 개요
