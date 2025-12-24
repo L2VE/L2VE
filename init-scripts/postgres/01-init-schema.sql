@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS projects (
     webhook_url VARCHAR(500),
     default_scan_mode VARCHAR(50) DEFAULT 'custom',
     default_profile_mode VARCHAR(50) DEFAULT 'preset',
+    default_provider VARCHAR(50) DEFAULT 'openrouter',
+    default_model VARCHAR(100) DEFAULT 'x-ai/grok-4.1-fast',
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
 );

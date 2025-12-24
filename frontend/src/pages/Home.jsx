@@ -5,6 +5,79 @@ import projectService from '../services/projectService';
 import AppNavbar from '../components/common/AppNavbar';
 import { useTheme } from '../hooks/useTheme';
 
+const providerCatalog = [
+  {
+    value: 'openrouter',
+    label: 'OpenRouter',
+    models: [
+      { value: 'x-ai/grok-4.1-fast', label: 'xAI: Grok 4.1 Fast' },
+      { value: 'qwen/qwen3-vl-30b-a3b-instruct', label: 'Qwen: Qwen3 VL 30B A3B Instruct' },
+      { value: 'qwen/qwen3-vl-235b-a22b-instruct', label: 'Qwen: Qwen3 VL 235B A22B Instruct' },
+      { value: 'z-ai/glm-4.6', label: 'Z.AI: GLM 4.6' },
+      { value: 'google/gemini-2.0-flash-001', label: 'Google: Gemini 2.0 Flash 001' },
+      { value: 'google/gemini-2.0-pro-exp-02-05', label: 'Google: Gemini 2.0 Pro Exp 02-05' },
+      { value: 'deepseek/deepseek-r1', label: 'DeepSeek: DeepSeek R1' },
+      { value: 'deepseek/deepseek-r1-distill-llama-70b', label: 'DeepSeek: DeepSeek R1 Distill Llama 70B' },
+      { value: 'openai/gpt-4o-2024-11-20', label: 'OpenAI: GPT-4o 2024-11-20' },
+      { value: 'openai/o3-mini-high', label: 'OpenAI: o3 Mini High' },
+    ],
+  },
+  {
+    value: 'openai',
+    label: 'OpenAI',
+    models: [
+      { value: 'gpt-5.1', label: 'GPT-5.1' },
+      { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
+      { value: 'gpt-5', label: 'GPT-5' },
+      { value: 'gpt-5-codex', label: 'GPT-5 Codex' },
+      { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+      { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
+      { value: 'gpt-4.1', label: 'GPT-4.1' },
+      { value: 'gpt-4o', label: 'GPT-4o' },
+      { value: 'gpt-4', label: 'GPT-4' },
+    ],
+  },
+  {
+    value: 'anthropic',
+    label: 'Anthropic',
+    models: [
+      { value: 'claude-sonnet-4-5-20250929', label: 'Claude 4.5 Sonnet' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Claude 4.5 Haiku' },
+    ],
+  },
+  {
+    value: 'google',
+    label: 'Google (Vertex AI)',
+    models: [
+      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+      { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+      { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+    ],
+  },
+  {
+    value: 'bedrock',
+    label: 'AWS Bedrock',
+    models: [
+      { value: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0', label: 'Claude 4.5 Sonnet' },
+      { value: 'global.anthropic.claude-haiku-4-5-20250929-v1:0', label: 'Claude 4.5 Haiku' },
+      { value: 'global.amazon.nova-2-lite-v1:0', label: 'Nova 2 Lite' },
+    ],
+  },
+  {
+    value: 'groq',
+    label: 'Groq',
+    models: [
+      { value: 'qwen/qwen3-32b', label: 'Qwen 3 32B' },
+      { value: 'qwen/qwen3-14b', label: 'Qwen 3 14B' },
+      { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile' },
+      { value: 'llama-3.1-70b-versatile', label: 'Llama 3.1 70B Versatile' },
+      { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant' },
+      { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B 32K' },
+    ],
+  },
+];
+
 function Home() {
   const navigate = useNavigate();
   const { isDark } = useTheme();
@@ -34,6 +107,8 @@ function Home() {
     webhook_secret: '',
     default_scan_mode: 'custom',  // Full Scan (기본값)
     default_profile_mode: 'preset',  // 기본 설정 (기본값)
+    default_provider: 'openrouter',
+    default_model: 'x-ai/grok-4.1-fast'
   });
   const [createFormData, setCreateFormData] = useState(getInitialCreateForm);
   const [myTeams, setMyTeams] = useState([]);
@@ -63,7 +138,7 @@ function Home() {
       await loadStats();
       await loadMyTeams();
     };
-    
+
     init();
   }, [navigate]);
 
@@ -146,7 +221,7 @@ function Home() {
   const handleCreateProject = async (e) => {
     e.preventDefault();
     setError('');
-    
+
     if (!createFormData.name.trim()) {
       setError('Project name is required');
       return;
@@ -176,6 +251,8 @@ function Home() {
         webhook_secret: createFormData.webhook_secret?.trim() || undefined,
         default_scan_mode: createFormData.default_scan_mode || 'custom',
         default_profile_mode: createFormData.default_profile_mode || 'preset',
+        default_provider: createFormData.default_provider || 'groq',
+        default_model: createFormData.default_model || 'llama3-70b-8192',
       };
       await projectService.createProject(dataToSend);
       setShowCreateModal(false);
@@ -237,7 +314,7 @@ function Home() {
     const date = new Date(dateString);
     const now = new Date();
     const seconds = Math.floor((now - date) / 1000);
-    
+
     if (seconds < 60) return `${seconds}s ago`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
@@ -435,11 +512,10 @@ function Home() {
                         setSortBy('recent');
                         setShowSortMenu(false);
                       }}
-                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${
-                        sortBy === 'recent'
-                          ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
-                          : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
-                      }`}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${sortBy === 'recent'
+                        ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
+                        : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -456,11 +532,10 @@ function Home() {
                         setSortBy('name');
                         setShowSortMenu(false);
                       }}
-                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${
-                        sortBy === 'name'
-                          ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
-                          : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
-                      }`}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${sortBy === 'name'
+                        ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
+                        : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" />
@@ -477,11 +552,10 @@ function Home() {
                         setSortBy('vulnerabilities');
                         setShowSortMenu(false);
                       }}
-                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${
-                        sortBy === 'vulnerabilities'
-                          ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
-                          : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
-                      }`}
+                      className={`w-full px-4 py-2.5 text-left text-sm flex items-center space-x-3 transition-colors ${sortBy === 'vulnerabilities'
+                        ? isDark ? 'bg-cyan-500/20 text-cyan-300 font-semibold' : 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 font-semibold'
+                        : isDark ? 'text-gray-300 hover:bg-gray-700/50' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -504,31 +578,28 @@ function Home() {
               <div className={`flex items-center space-x-1.5 ${isDark ? 'bg-gray-800/90 border-gray-700' : 'bg-white/90 border-gray-200/50'} backdrop-blur-sm border rounded-xl p-1 shadow-sm`}>
                 <button
                   onClick={() => setStatusFilter('all')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${
-                    statusFilter === 'all'
-                      ? isDark ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                      : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
-                  }`}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${statusFilter === 'all'
+                    ? isDark ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                    : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
+                    }`}
                 >
                   전체
                 </button>
                 <button
                   onClick={() => setStatusFilter('active')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${
-                    statusFilter === 'active'
-                      ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
-                  }`}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${statusFilter === 'active'
+                    ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
+                    }`}
                 >
                   활성
                 </button>
                 <button
                   onClick={() => setStatusFilter('inactive')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${
-                    statusFilter === 'inactive'
-                      ? isDark ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30' : 'bg-gray-50 text-gray-700 border border-gray-200'
-                      : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
-                  }`}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-300 ${statusFilter === 'inactive'
+                    ? isDark ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30' : 'bg-gray-50 text-gray-700 border border-gray-200'
+                    : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-transparent'
+                    }`}
                 >
                   비활성
                 </button>
@@ -541,11 +612,10 @@ function Home() {
               <div className={`flex items-center space-x-1 ${isDark ? 'bg-gray-800/90 border-gray-700' : 'bg-white/90 border-gray-200/50'} backdrop-blur-sm border rounded-xl p-1 shadow-sm`}>
                 <button
                   onClick={() => setView('grid')}
-                  className={`p-2 rounded-lg transition-all duration-300 ${
-                    view === 'grid' 
-                      ? isDark ? 'bg-cyan-500/20 text-cyan-400' : 'bg-indigo-50 text-indigo-600'
-                      : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
+                  className={`p-2 rounded-lg transition-all duration-300 ${view === 'grid'
+                    ? isDark ? 'bg-cyan-500/20 text-cyan-400' : 'bg-indigo-50 text-indigo-600'
+                    : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
                   title="그리드 보기"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -554,11 +624,10 @@ function Home() {
                 </button>
                 <button
                   onClick={() => setView('list')}
-                  className={`p-2 rounded-lg transition-all duration-300 ${
-                    view === 'list' 
-                      ? isDark ? 'bg-cyan-500/20 text-cyan-400' : 'bg-indigo-50 text-indigo-600'
-                      : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
+                  className={`p-2 rounded-lg transition-all duration-300 ${view === 'list'
+                    ? isDark ? 'bg-cyan-500/20 text-cyan-400' : 'bg-indigo-50 text-indigo-600'
+                    : isDark ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
                   title="리스트 보기"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -632,11 +701,10 @@ function Home() {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                          project.status === 'active' 
-                            ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : isDark ? 'bg-gray-700 text-gray-300 border border-gray-600' : 'bg-gray-100 text-gray-600 border border-gray-200'
-                        }`}>
+                        <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${project.status === 'active'
+                          ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : isDark ? 'bg-gray-700 text-gray-300 border border-gray-600' : 'bg-gray-100 text-gray-600 border border-gray-200'
+                          }`}>
                           <div className={`w-1.5 h-1.5 rounded-full mr-1.5 ${project.status === 'active' ? 'bg-emerald-500' : 'bg-gray-400'}`}></div>
                           {project.status}
                         </span>
@@ -691,13 +759,13 @@ function Home() {
                   </svg>
                 </div>
               </div>
-              
+
               <h3 className={`text-2xl font-bold mb-3 ${isDark ? 'text-gray-100' : 'text-gray-900'}`}>
                 {searchQuery ? '프로젝트를 찾을 수 없습니다' : '아직 프로젝트가 없습니다'}
               </h3>
-              
+
               <p className={`mb-8 text-center max-w-md ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                {searchQuery 
+                {searchQuery
                   ? `"${searchQuery}"와 일치하는 프로젝트가 없습니다. 검색어나 필터를 조정해 보세요.`
                   : '첫 번째 보안 진단 프로젝트를 생성하여 시작하세요.'
                 }
@@ -736,11 +804,11 @@ function Home() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProjects.map((project) => (
-            <div
-              key={project.id}
-              onClick={() => navigate(`/project/${project.id}`)}
-              className={`relative ${isDark ? 'bg-gray-800/70 border border-gray-600 shadow-gray-900/40' : 'bg-white border border-indigo-200 shadow-[0_25px_50px_rgba(79,70,229,0.10)]'} backdrop-blur-sm rounded-2xl p-6 ${isDark ? 'hover:shadow-2xl hover:shadow-cyan-500/20 hover:border-gray-500' : 'hover:shadow-2xl hover:shadow-indigo-500/20 hover:border-indigo-300'} hover:-translate-y-2 transition-all duration-500 cursor-pointer group before:absolute before:inset-0 before:rounded-2xl before:bg-gradient-to-br ${isDark ? 'before:from-cyan-500/0 before:to-blue-500/0 hover:before:from-cyan-500/5 hover:before:to-blue-500/5' : 'before:from-indigo-500/0 before:to-purple-500/0 hover:before:from-indigo-500/5 hover:before:to-purple-500/5'} before:transition-all before:duration-500`}
-            >
+                <div
+                  key={project.id}
+                  onClick={() => navigate(`/project/${project.id}`)}
+                  className={`relative ${isDark ? 'bg-gray-800/70 border border-gray-600 shadow-gray-900/40' : 'bg-white border border-indigo-200 shadow-[0_25px_50px_rgba(79,70,229,0.10)]'} backdrop-blur-sm rounded-2xl p-6 ${isDark ? 'hover:shadow-2xl hover:shadow-cyan-500/20 hover:border-gray-500' : 'hover:shadow-2xl hover:shadow-indigo-500/20 hover:border-indigo-300'} hover:-translate-y-2 transition-all duration-500 cursor-pointer group before:absolute before:inset-0 before:rounded-2xl before:bg-gradient-to-br ${isDark ? 'before:from-cyan-500/0 before:to-blue-500/0 hover:before:from-cyan-500/5 hover:before:to-blue-500/5' : 'before:from-indigo-500/0 before:to-purple-500/0 hover:before:from-indigo-500/5 hover:before:to-purple-500/5'} before:transition-all before:duration-500`}
+                >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center space-x-2">
                       <div className={`w-8 h-8 ${isDark ? 'bg-gray-700 border border-gray-600' : 'bg-gray-100'} rounded-lg flex items-center justify-center`}>
@@ -748,11 +816,10 @@ function Home() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                         </svg>
                       </div>
-                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                        project.status === 'active' 
-                          ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                          : isDark ? 'bg-gray-700 text-gray-300 border border-gray-600' : 'bg-gray-100 text-gray-600 border border-gray-200'
-                      }`}>
+                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${project.status === 'active'
+                        ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : isDark ? 'bg-gray-700 text-gray-300 border border-gray-600' : 'bg-gray-100 text-gray-600 border border-gray-200'
+                        }`}>
                         <div className={`w-1.5 h-1.5 rounded-full mr-1.5 ${project.status === 'active' ? 'bg-emerald-500' : 'bg-gray-400'}`}></div>
                         {project.status}
                       </span>
@@ -760,7 +827,7 @@ function Home() {
                     {/* 메뉴 버튼 - Superuser 또는 프로젝트 소유자만 표시 */}
                     {(user?.is_superuser || project.user_id === user?.id) && (
                       <div className="relative">
-                        <button 
+                        <button
                           onClick={(e) => toggleMenu(e, project.id)}
                           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-100 rounded"
                           title="메뉴"
@@ -769,7 +836,7 @@ function Home() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                           </svg>
                         </button>
-                        
+
                         {/* 드롭다운 메뉴 */}
                         {openMenuId === project.id && (
                           <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 animate-fade-in">
@@ -839,7 +906,7 @@ function Home() {
               {/* New Project Card - Clean */}
               <button
                 onClick={() => setShowCreateModal(true)}
-              className={`relative group ${isDark ? 'bg-gray-800/50 border-2 border-dashed border-gray-600 hover:border-cyan-500' : 'bg-white border-2 border-dashed border-blue-300 hover:border-blue-400'} rounded-2xl p-6 flex flex-col items-center justify-center min-h-[320px] text-center transition-all duration-300 hover:shadow-2xl hover:-translate-y-1`}
+                className={`relative group ${isDark ? 'bg-gray-800/50 border-2 border-dashed border-gray-600 hover:border-cyan-500' : 'bg-white border-2 border-dashed border-blue-300 hover:border-blue-400'} rounded-2xl p-6 flex flex-col items-center justify-center min-h-[320px] text-center transition-all duration-300 hover:shadow-2xl hover:-translate-y-1`}
               >
                 <div className="flex flex-col items-center">
                   <div className={`w-20 h-20 ${isDark ? 'bg-cyan-500/20 border-cyan-500/30' : 'bg-indigo-50 border-indigo-100'} border rounded-2xl flex items-center justify-center mb-6 transition-all duration-300 ${isDark ? 'group-hover:bg-cyan-500/30 group-hover:border-cyan-500/40' : 'group-hover:bg-indigo-100 group-hover:border-indigo-200'}`}>
@@ -847,11 +914,11 @@ function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
                   </div>
-                  
+
                   <p className={`text-lg font-bold ${isDark ? 'text-gray-100 group-hover:text-cyan-400' : 'text-gray-900 group-hover:text-indigo-600'} mb-2 transition-colors`}>
                     새 프로젝트 만들기
                   </p>
-                  
+
                   <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'} mb-6`}>
                     새로운 보안 진단 시작하기
                   </p>
@@ -873,16 +940,14 @@ function Home() {
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6 bg-black/60 backdrop-blur-md">
           <div
-            className={`w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl ${
-              isDark ? 'bg-gray-900 text-gray-100 border-2 border-gray-800' : 'bg-white text-gray-900 border-2 border-blue-100'
-            }`}
+            className={`w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl ${isDark ? 'bg-gray-900 text-gray-100 border-2 border-gray-800' : 'bg-white text-gray-900 border-2 border-blue-100'
+              }`}
           >
             <div
-              className={`flex items-start justify-between px-8 py-6 border-b ${
-                isDark
-                  ? 'bg-gradient-to-r from-slate-950 via-gray-900 to-slate-900 border-gray-800'
-                  : 'bg-gradient-to-r from-blue-50 via-white to-purple-50 border-blue-100'
-              }`}
+              className={`flex items-start justify-between px-8 py-6 border-b ${isDark
+                ? 'bg-gradient-to-r from-slate-950 via-gray-900 to-slate-900 border-gray-800'
+                : 'bg-gradient-to-r from-blue-50 via-white to-purple-50 border-blue-100'
+                }`}
             >
               <div>
                 <p className="text-xs font-semibold tracking-[0.3em] uppercase text-gray-400">NEW PROJECT</p>
@@ -909,11 +974,10 @@ function Home() {
             <form onSubmit={handleCreateProject} className="px-8 py-6 space-y-6">
               {error && (
                 <div
-                  className={`p-4 rounded-2xl border-[3px] ${
-                    isDark
-                      ? 'bg-rose-500/10 border-rose-400/60 text-rose-200'
-                      : 'bg-rose-50 border-rose-200 text-rose-700'
-                  }`}
+                  className={`p-4 rounded-2xl border-[3px] ${isDark
+                    ? 'bg-rose-500/10 border-rose-400/60 text-rose-200'
+                    : 'bg-rose-50 border-rose-200 text-rose-700'
+                    }`}
                 >
                   <p className="text-sm font-semibold">{error}</p>
                 </div>
@@ -931,11 +995,10 @@ function Home() {
                     onChange={handleFormChange}
                     placeholder="예: Zero Trust API Security"
                     required
-                    className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                      isDark
-                        ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                        : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                    }`}
+                    className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                      ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                      : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                      }`}
                   />
                 </div>
                 <div>
@@ -946,11 +1009,10 @@ function Home() {
                     name="team_id"
                     value={createFormData.team_id}
                     onChange={handleFormChange}
-                    className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                      isDark
-                        ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                        : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                    }`}
+                    className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                      ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                      : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                      }`}
                   >
                     <option value="">팀 없음</option>
                     {myTeams.map((team) => (
@@ -972,11 +1034,10 @@ function Home() {
                   onChange={handleFormChange}
                   placeholder="진단 범위, 아키텍처, 보안 목표 등을 입력하세요."
                   rows="3"
-                  className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] resize-none ${
-                    isDark
-                      ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                      : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                  }`}
+                  className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] resize-none ${isDark
+                    ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                    : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                    }`}
                 ></textarea>
               </div>
 
@@ -1010,28 +1071,26 @@ function Home() {
                         key={option.value}
                         type="button"
                         onClick={() => handleTriggerModeChange(option.value)}
-                        className={`text-left rounded-2xl border-[3px] p-4 transition-all ${
-                          isActive
-                            ? isDark
-                              ? 'border-blue-400 bg-slate-900/80 shadow-inner shadow-blue-500/20'
-                              : 'border-blue-500 bg-blue-50 shadow-inner shadow-blue-500/10'
-                            : isDark
-                              ? 'border-gray-700 bg-gray-900/40 hover:border-blue-400/70'
-                              : 'border-blue-100 bg-white hover:border-blue-400/60'
-                        }`}
+                        className={`text-left rounded-2xl border-[3px] p-4 transition-all ${isActive
+                          ? isDark
+                            ? 'border-blue-400 bg-slate-900/80 shadow-inner shadow-blue-500/20'
+                            : 'border-blue-500 bg-blue-50 shadow-inner shadow-blue-500/10'
+                          : isDark
+                            ? 'border-gray-700 bg-gray-900/40 hover:border-blue-400/70'
+                            : 'border-blue-100 bg-white hover:border-blue-400/60'
+                          }`}
                       >
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-base font-semibold">{option.label}</div>
                           <span
-                            className={`text-xs font-bold px-3 py-1 rounded-full ${
-                              isActive
-                                ? isDark
-                                  ? 'bg-blue-500/30 text-blue-100 border border-blue-400/40'
-                                  : 'bg-blue-100 text-blue-800 border border-blue-200'
-                                : isDark
-                                  ? 'bg-gray-800 text-gray-300 border border-gray-700'
-                                  : 'bg-gray-100 text-gray-600 border border-gray-200'
-                            }`}
+                            className={`text-xs font-bold px-3 py-1 rounded-full ${isActive
+                              ? isDark
+                                ? 'bg-blue-500/30 text-blue-100 border border-blue-400/40'
+                                : 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : isDark
+                                ? 'bg-gray-800 text-gray-300 border border-gray-700'
+                                : 'bg-gray-100 text-gray-600 border border-gray-200'
+                              }`}
                           >
                             {option.badge}
                           </span>
@@ -1060,11 +1119,10 @@ function Home() {
                           value={createFormData.git_url}
                           onChange={handleFormChange}
                           placeholder="https://github.com/org/repo.git"
-                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                            isDark
-                              ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                              : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                          }`}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
                           required
                         />
                       </div>
@@ -1078,11 +1136,10 @@ function Home() {
                           value={createFormData.git_branch}
                           onChange={handleFormChange}
                           placeholder="main"
-                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                            isDark
-                              ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                              : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                          }`}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
                           required
                         />
                       </div>
@@ -1097,11 +1154,10 @@ function Home() {
                           value={createFormData.webhook_secret}
                           onChange={handleFormChange}
                           placeholder="GitHub Secret"
-                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                            isDark
-                              ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                              : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                          }`}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
                         />
                       </div>
                     </div>
@@ -1128,11 +1184,10 @@ function Home() {
                           name="default_scan_mode"
                           value={createFormData.default_scan_mode}
                           onChange={handleFormChange}
-                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                            isDark
-                              ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                              : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                          }`}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
                         >
                           <option value="preset">⚡ Quick Scan (빠른 스캔)</option>
                           <option value="custom">🔍 Full Scan (전체 스캔, 권장)</option>
@@ -1150,11 +1205,10 @@ function Home() {
                           name="default_profile_mode"
                           value={createFormData.default_profile_mode}
                           onChange={handleFormChange}
-                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${
-                            isDark
-                              ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
-                              : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
-                          }`}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
                         >
                           <option value="preset">⚙️ 기본 설정 (권장)</option>
                           <option value="custom">🔧 고급 설정</option>
@@ -1163,6 +1217,61 @@ function Home() {
                           {createFormData.default_profile_mode === 'preset' && '기본 설정 - 일반적인 사용 (권장)'}
                           {createFormData.default_profile_mode === 'custom' && '고급 설정 - 세부 조정'}
                         </p>
+                      </div>
+
+                      {/* AI 모델 설정 */}
+                      <div>
+                        <label className="text-xs font-semibold uppercase tracking-wider">
+                          AI Provider
+                        </label>
+                        <select
+                          name="default_provider"
+                          value={createFormData.default_provider}
+                          onChange={(e) => {
+                            const newProvider = e.target.value;
+                            // Find default model for this provider (first one)
+                            const providerData = providerCatalog.find(p => p.value === newProvider);
+                            const defaultModel = providerData?.models[0]?.value || '';
+
+                            setCreateFormData(prev => ({
+                              ...prev,
+                              default_provider: newProvider,
+                              default_model: defaultModel
+                            }));
+                          }}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
+                        >
+                          {providerCatalog.map(provider => (
+                            <option key={provider.value} value={provider.value}>
+                              {provider.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold uppercase tracking-wider">
+                          AI Model
+                        </label>
+                        <select
+                          name="default_model"
+                          value={createFormData.default_model}
+                          onChange={handleFormChange}
+                          className={`mt-2 w-full px-4 py-3 rounded-2xl text-sm focus:outline-none focus:ring-2 border-[3px] ${isDark
+                            ? 'bg-gray-900/70 border-gray-700 text-white focus:ring-blue-400 focus:border-blue-400'
+                            : 'bg-white border-blue-100 text-gray-900 focus:ring-blue-900 focus:border-blue-600'
+                            }`}
+                        >
+                          {providerCatalog
+                            .find(p => p.value === createFormData.default_provider)
+                            ?.models.map(model => (
+                              <option key={model.value} value={model.value}>
+                                {model.label}
+                              </option>
+                            )) || <option value="">모델 없음</option>}
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -1192,11 +1301,10 @@ function Home() {
                         setError('');
                         setCreateFormData(getInitialCreateForm());
                       }}
-                      className={`flex-1 sm:flex-none px-5 py-3 rounded-2xl font-semibold border-2 transition ${
-                        isDark
-                          ? 'border-gray-700 text-gray-200 hover:bg-gray-800'
-                          : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                      }`}
+                      className={`flex-1 sm:flex-none px-5 py-3 rounded-2xl font-semibold border-2 transition ${isDark
+                        ? 'border-gray-700 text-gray-200 hover:bg-gray-800'
+                        : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                        }`}
                     >
                       취소
                     </button>

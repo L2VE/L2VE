@@ -18,7 +18,7 @@ println "==> Setting up GitHub credential..."
 def credentialsStore = jenkins.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
 def domain = Domain.global()
 def existingCredential = credentialsStore.getCredentials(domain).find { it.id == "github-token" }
-def githubUsername = System.getenv('GITHUB_USERNAME') ?: 'L2VE'
+def githubUsername = System.getenv('GITHUB_USERNAME') ?: 'git'
 def githubToken = System.getenv('GITHUB_TOKEN') ?: ''
 
 // 기존 credential이 없거나 타입이 다르면 재생성

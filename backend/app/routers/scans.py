@@ -481,3 +481,7 @@ async def get_vulnerability_stats(
         "owasp_top10": owasp_stats,
         "attack_vectors": attack_vector_stats
     }
+
+# ===== Jenkins Auto-Scan Endpoint =====
+
+

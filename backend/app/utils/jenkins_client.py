@@ -468,7 +468,24 @@ println("All scripts approved successfully")
         headers = self._build_headers()
         url = f"{self.base_url}/scriptApproval/api/json"
         resp = self.session.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("pendingScripts", [])
-        return []
+    def run_script(self, script: str) -> str:
+        """
+        Execute a Groovy script on the Jenkins controller.
+        
+        Args:
+            script: Groovy script content
+            
+        Returns:
+            Output from the script execution
+        """
+        headers = self._build_headers({"Content-Type": "application/x-www-form-urlencoded"})
+        # Use /scriptText endpoint which returns raw text output
+        url = f"{self.base_url}/scriptText"
+        data = {"script": script}
+        
+        resp = self.session.post(url, data=data, headers=headers, timeout=30)
+        
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to execute Groovy script: {resp.status_code} {resp.text}")
+            
+        return resp.text

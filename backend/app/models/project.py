@@ -27,6 +27,10 @@ class Project(Base):
     # Git commit 트리거 시 사용할 기본 스캔 설정
     default_scan_mode = Column(String(50), nullable=True, default='custom')  # 'preset' (Quick Scan), 'custom' (Full Scan)
     default_profile_mode = Column(String(50), nullable=True, default='preset')  # 'preset' (기본 설정), 'custom' (고급 설정)
+
+    # 기본 LLM 설정 (Git 스캔용)
+    default_provider = Column(String(50), nullable=True, default='groq')  # groq, openai 등
+    default_model = Column(String(100), nullable=True, default='llama3-70b-8192')  # 특정 모델명
     
     # Relationships
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")

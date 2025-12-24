@@ -1,7 +1,7 @@
 import os
 import re
 import requests
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 from app.config import get_settings
 from app.utils.jenkins_client import JenkinsClient
@@ -17,6 +17,150 @@ class JenkinsJobService:
         self.settings = get_settings()
         self.default_script_path = getattr(self.settings, "JENKINS_GIT_SCRIPT_PATH", "Jenkinsfile")
 
+    def _read_jenkinsfile_content(self) -> str:
+        """
+        Read local Jenkinsfile content.
+        Tries multiple paths to find the file.
+        """
+        from pathlib import Path
+        
+        searched_paths = []
+        jenkinsfile_path = None
+        
+        # 1. /app/Jenkinsfile (Backend container path)
+        p = Path("/app/Jenkinsfile")
+        if p.exists():
+            jenkinsfile_path = p
+        searched_paths.append(str(p))
+        
+        # 2. Project root (dev environment)
+        if not jenkinsfile_path:
+            current_file = Path(__file__).resolve()
+            project_root = current_file.parent.parent.parent.parent
+            p = project_root / "jenkins" / "Jenkinsfile"
+            if p.exists():
+                jenkinsfile_path = p
+            searched_paths.append(str(p))
+            
+            p = project_root / "Jenkinsfile"
+            if p.exists():
+                jenkinsfile_path = p
+            searched_paths.append(str(p))
+
+        if not jenkinsfile_path:
+             raise FileNotFoundError(
+                f"Jenkinsfile not found. Searched paths:\n" +
+                "\n".join(f"  - {path}" for path in searched_paths)
+            )
+
+        with open(jenkinsfile_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        if not content:
+            raise ValueError(f"Jenkinsfile is empty at {jenkinsfile_path}")
+            
+        return content
+
+    def _build_gwt_pipeline_xml(self, git_url: str, git_branch: str, job_token: str) -> str:
+        """
+        Build Jenkins pipeline XML for Generic Webhook Trigger mode (Inline Script).
+        Replaces legacy GitSCM trigger.
+        """
+        # Read local Jenkinsfile content
+        pipeline_script = self._read_jenkinsfile_content()
+        
+        # XML Escape
+        pipeline_script_escaped = (
+            pipeline_script
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+            .replace("'", '&apos;')
+        )
+
+        return f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <description>Auto-generated pipeline for L2VE project (Generic Webhook Mode)</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty/>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>GITHUB_URL</name>
+          <description>Target Git Repository URL</description>
+          <defaultValue>{git_url}</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>TRIGGER_MODE</name>
+          <defaultValue>git</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+           <name>PROJECT_NAME</name>
+           <description>Project Name (from GWT)</description>
+           <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{pipeline_script_escaped}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers>
+    <org.jenkinsci.plugins.gwt.GenericTrigger plugin="generic-webhook-trigger">
+      <spec></spec>
+      <genericVariables>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>GW_REF</key>
+          <value>$.ref</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>GW_COMMIT</key>
+          <value>$.head_commit.id</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>GW_PUSHER</key>
+          <value>$.pusher.name</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>GW_REPO_URL</key>
+          <value>$.repository.clone_url</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>GW_PROJECT_NAME</key>
+          <value>$.repository.name</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+      </genericVariables>
+      <regexpFilterText>$GW_REF</regexpFilterText>
+      <regexpFilterExpression>refs/heads/{git_branch}</regexpFilterExpression>
+      <printPostContent>false</printPostContent>
+      <printContributedVariables>true</printContributedVariables>
+      <causeString>Triggered by Generic Webhook</causeString>
+      <token>{job_token}</token>
+      <silentResponse>false</silentResponse>
+    </org.jenkinsci.plugins.gwt.GenericTrigger>
+  </triggers>
+  <disabled>false</disabled>
+</flow-definition>
+"""
+
     def provision_pipeline(
         self,
         project_name: str,
@@ -25,7 +169,8 @@ class JenkinsJobService:
         git_url: Optional[str] = None,
         git_branch: Optional[str] = None,
         webhook_secret: Optional[str] = None,
-    ) -> Dict[str, str]:
+        request_host: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Create or update a Jenkins pipeline job for a project.
         
@@ -45,7 +190,9 @@ class JenkinsJobService:
         if trigger_mode == 'git':
             if not git_url or not git_branch:
                 raise ValueError("git_url and git_branch are required for git trigger mode")
-            config_xml = self._build_git_pipeline_xml(git_url, git_branch)
+            # Use Generic Webhook Trigger (GWT) with Inline Script instead of GitSCM
+            # Token allows unique mapping: .../generic-webhook-trigger/invoke?token={desired_job_name}
+            config_xml = self._build_gwt_pipeline_xml(git_url, git_branch, desired_job_name)
         else:  # web trigger mode
             # Web 모드: Jenkins 컨테이너 내부의 로컬 Jenkinsfile 사용
             print(f"[DEBUG] Web trigger mode: Using readFileFromWorkspace for Jenkinsfile")
@@ -68,9 +215,21 @@ class JenkinsJobService:
         webhook_url = None
         webhook_id = None
         if trigger_mode == 'git':
-            webhook_url = self.client.get_github_webhook_endpoint()
+            # GWT URL format: /generic-webhook-trigger/invoke?token={token}
+            base_url = self.client.base_url.rstrip('/')
+            
+            # 외부 접근 URL 계산
+            external_url = getattr(self.settings, "JENKINS_EXTERNAL_URL", None)
+            if external_url and external_url.strip():
+                base_url = external_url.rstrip('/')
+            elif request_host and request_host.strip() and request_host != 'localhost':
+                base_url = f"http://{request_host}:10218"
+
+            webhook_url = f"{base_url}/generic-webhook-trigger/invoke?token={final_job_name}"
+
             try:
-                webhook_id = self._create_github_webhook(git_url, webhook_url, webhook_secret)
+                # 계산된 URL로 Webhook 등록
+                webhook_id = self._create_github_webhook(git_url, webhook_url, webhook_secret, request_host=request_host)
             except Exception as e:
                 print(f"⚠️ Failed to auto-register GitHub webhook: {e}")
                 print(f"   Please manually register webhook at: {webhook_url}")
@@ -152,7 +311,8 @@ class JenkinsJobService:
         self,
         git_url: str,
         webhook_url: str,
-        webhook_secret: Optional[str] = None
+        webhook_secret: Optional[str] = None,
+        request_host: Optional[str] = None
     ) -> Optional[str]:
         """
         GitHub API를 사용하여 webhook 자동 등록
@@ -178,6 +338,31 @@ class JenkinsJobService:
         owner, repo = self._extract_github_repo_info(git_url)
         
         print(f"[DEBUG] Creating webhook for: owner={owner}, repo={repo}")
+
+        # 외부 접근 URL 보정:
+        # 1. JENKINS_EXTERNAL_URL 설정이 있으면 우선 사용
+        # 2. 없으면 request_host (사용자 브라우저 접속 호스트) + 10218 (기본 외부 포트) 사용
+        final_webhook_url = webhook_url
+        external_url = getattr(self.settings, "JENKINS_EXTERNAL_URL", None)
+        
+        if external_url and external_url.strip():
+            # 설정값 우선
+            base_ext = external_url.rstrip('/')
+            # Use provided webhook_url if it's already fully formed (e.g. GWT), otherwise append default
+            if webhook_url and base_ext in webhook_url:
+                 final_webhook_url = webhook_url
+            else:
+                 final_webhook_url = f"{base_ext}/github-webhook/"
+            print(f"[DEBUG] Using configured external webhook URL: {final_webhook_url}")
+        elif request_host and request_host.strip() and request_host != 'localhost':
+             # 자동 감지된 호스트 사용 (localhost 제외)
+             # 포트는 docker-compose 기본값인 10218로 가정
+            base_ext = f"http://{request_host}:10218"
+            if webhook_url and base_ext in webhook_url:
+                final_webhook_url = webhook_url
+            else:
+                final_webhook_url = f"{base_ext}/github-webhook/"
+            print(f"[DEBUG] Using auto-detected external webhook URL: {final_webhook_url}")
         
         # GitHub API로 webhook 생성
         api_url = f"https://api.github.com/repos/{owner}/{repo}/hooks"
@@ -193,7 +378,7 @@ class JenkinsJobService:
             "active": True,
             "events": ["push"],
             "config": {
-                "url": webhook_url,
+                "url": final_webhook_url,
                 "content_type": "json",
                 "insecure_ssl": "0"  # SSL 검증 활성화
             }
@@ -956,6 +1141,11 @@ class JenkinsJobService:
 """
 
     def _build_git_pipeline_xml(self, git_url: str, git_branch: str) -> str:
+        # GitSCM을 위해 .git 접미사 보장
+        scm_url = git_url.strip().rstrip('/')
+        if not scm_url.endswith('.git'):
+            scm_url += '.git'
+            
         branch_spec = git_branch if git_branch.startswith("*/") else f"*/{git_branch}"
         script_path = self.default_script_path or "Jenkinsfile"
         
@@ -1164,7 +1354,7 @@ class JenkinsJobService:
       <configVersion>2</configVersion>
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>{git_url}</url>
+          <url>{scm_url}</url>
           {credentials_xml}
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>

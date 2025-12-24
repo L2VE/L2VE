@@ -29,7 +29,7 @@ credentials:
           - usernamePassword:
               id: "github-token"
               scope: GLOBAL
-              username: "${GITHUB_USERNAME:-L2VE}"
+              username: "${GITHUB_USERNAME:-git}"
               password: "${GITHUB_TOKEN}"
               description: "GitHub Personal Access Token"
 

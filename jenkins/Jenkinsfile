@@ -1,5 +1,17 @@
 // Progress reporter (used inside script blocks)
+// Progress reporter (used inside script blocks)
 def reportProgress = { stageName, status, message, percent ->
+    // params와 env를 모두 확인 (Auto-Scan Setup에서 설정된 env가 우선)
+    def scanId = env.SCAN_ID ?: params.SCAN_ID
+    def projectId = env.PROJECT_ID ?: params.PROJECT_ID
+    def apiBase = env.API_BASE ?: params.API_BASE
+
+    // Scan ID가 0이거나 없으면 백엔드에 보고할 수 없음 (아직 생성되지 않음)
+    if (!scanId || scanId == '0' || scanId == 0) {
+        echo "[RepoProgress] Skip backend report (Invalid ScanID: ${scanId}). Message: ${message}"
+        return
+    }
+
     def percentLine = percent != null ? "\"progress_percent\": ${percent}" : "\"progress_percent\": null"
     def payload = """{
   "stage": "${stageName}",
@@ -11,7 +23,7 @@ def reportProgress = { stageName, status, message, percent ->
         cat > progress_payload.json <<'EOF'
 ${payload}
 EOF
-        curl -sS -X PATCH "${params.API_BASE}/projects/${params.PROJECT_ID}/scans/${params.SCAN_ID}/progress" \\
+        curl -sS -X PATCH "${apiBase}/projects/${projectId}/scans/${scanId}/progress" \\
             -H "Content-Type: application/json" \\
             -H "X-Api-Key: ${env.BACKEND_SERVICE_API_KEY}" \\
             -H "X-Jenkins-Token: ${env.JENKINS_CALLBACK_SECRET}" \\
@@ -25,12 +37,17 @@ EOF
 }
 
 // Email notifier (runs only when NOTIFY_EMAILS is provided)
+// Email notifier (runs only when NOTIFY_EMAILS is provided)
 def sendEmailNotification = { statusText, extraMessage = "" ->
-    def recipients = params.NOTIFY_EMAILS?.trim()
+    def recipients = env.NOTIFY_EMAILS ?: params.NOTIFY_EMAILS
+    if (recipients) recipients = recipients.trim()
+    
     if (!recipients) {
         return
     }
     def projectLabel = env.PROJECT_NAME ?: params.PROJECT_NAME ?: params.GITHUB_URL ?: "project"
+    def scanId = env.SCAN_ID ?: params.SCAN_ID
+    
     def subject = "[L2VE] Scan ${projectLabel} #${BUILD_NUMBER} ${statusText}"
     def body = """<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f7fa; padding:24px;">
   <tbody><tr><td align="center">
@@ -63,7 +80,7 @@ def sendEmailNotification = { statusText, extraMessage = "" ->
 
                   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px; color:#374151;">
                     <tbody><tr><td style="padding:6px 0; width:120px;">프로젝트</td><td style="padding:6px 0;">${projectLabel}</td></tr>
-                    <tr><td style="padding:6px 0;">스캔 ID</td><td style="padding:6px 0;">${params.SCAN_ID}</td></tr>
+                    <tr><td style="padding:6px 0;">스캔 ID</td><td style="padding:6px 0;">${scanId}</td></tr>
                     <tr><td style="padding:6px 0;">상태</td><td style="padding:6px 0; font-weight:700; color:#16a34a;">
 ${statusText}
                       </td></tr>
@@ -153,21 +170,123 @@ pipeline {
     }
 
     stages {
+        stage('Auto-Scan Setup') {
+            // Git으로 트리거되었거나 SCAN_ID가 0인 경우에만 실행
+            when {
+                expression { env.TRIGGER_MODE == 'git' || params.TRIGGER_MODE == 'git' || params.SCAN_ID == '0' }
+            }
+            steps {
+                script {
+                    echo "========"
+                    echo "= Auto-Scan Setup (Git Trigger Detected)"
+                    echo "========"
+
+                    // 1. Git URL 확인 (GWT 변수 우선)
+                    def gitUrl = env.GW_REPO_URL ?: params.GITHUB_URL ?: env.GitUrl
+                    if (!gitUrl && env.GIT_URL) {
+                        gitUrl = env.GIT_URL
+                    }
+                    if (!gitUrl) {
+                        // SCM에서 추출 시도
+                        try {
+                            gitUrl = sh(script: 'git config --get remote.origin.url', returnStdout: true).trim()
+                        } catch (e) {
+                            echo "WARN: Failed to get git url from git config: ${e}"
+                        }
+                    }
+
+                    echo "Detected GIT_URL: ${gitUrl}"
+                    echo "Detected GITHUB_COMMIT_HASH: ${env.GW_COMMIT}"
+
+                    if (!gitUrl) {
+                        error "Git URL을 찾을 수 없어 자동 스캔을 설정할 수 없습니다."
+                    }
+
+                    // 2. 백엔드 API 호출하여 스캔 생성 및 설정 가져오기
+                    def apiBase = params.API_BASE ?: "http://backend:3000/api"
+                    
+                    echo "Calling Backend API to setup scan (Endpoint: ${apiBase}/projects/auto-scan/git)..."
+                    
+                    // JSON payload construction with proper escaping
+                    def payload = """{
+                        "github_url": "${gitUrl}",
+                        "github_commit_hash": "${env.GW_COMMIT ?: ''}",
+                        "scan_type": "ALL",
+                        "scan_mode": "standard",
+                        "profile_mode": "comprehensive",
+                        "source_type": "git"
+                    }"""
+                    
+                    // Write payload to file to avoid quoting issues
+                    writeFile file: 'auto_scan_req.json', text: payload
+                    
+                    def response = sh(script: """
+                        curl -sS -X POST "${apiBase}/projects/auto-scan/git" \\
+                            -H "Content-Type: application/json" \\
+                            -H "X-Api-Key: ${env.BACKEND_SERVICE_API_KEY}" \\
+                            --data @auto_scan_req.json
+                    """, returnStdout: true).trim()
+
+                    echo "Backend Response: ${response}"
+
+                    // 3. 응답 파싱 및 환경변수 설정
+                    def props = readJSON text: response
+
+                    if (!props.id) {
+                         error "Failed to create auto-scan. Response does not contain scan ID."
+                    }
+
+                    // 환경 변수 설정 (String으로 변환)
+                    env.SCAN_ID = "${props.id}"
+                    env.PROJECT_ID = "${props.project_id}"
+                    // Project name은 응답에 없으나 GWT에서 올 수 있음. 없으면 URL에서 파싱
+                    env.PROJECT_NAME = env.GW_PROJECT_NAME ?: gitUrl.tokenize('/')[-1].replace('.git', '')
+                    env.SCAN_MODE = props.scan_mode
+                    env.PROFILE_MODE = props.profile_mode
+                    env.TRIGGER_MODE = 'git'
+                    // Backend created response should now include these
+                    env.API_PROVIDER = props.api_provider
+                    env.MODEL = props.model
+                    env.SCAN_TYPE = 'ALL' 
+                    
+                    echo "✓ Auto-Scan Configured:"
+                    echo "  - SCAN_ID: ${env.SCAN_ID}"
+                    echo "  - PROJECT_ID: ${env.PROJECT_ID}"
+                    echo "  - PROJECT_NAME: ${env.PROJECT_NAME}"
+                    echo "  - SCAN_MODE: ${env.SCAN_MODE}" 
+
+                    // 이제 SCAN_ID가 생겼으므로 setup 단계 보고
+                    reportProgress("setup", "running", "자동 스캔 설정 완료 (ID: ${env.SCAN_ID})", 5)
+                }
+            }
+        }
+
         stage('Validate Input') {
             steps {
                 script {
+                    // 환경변수가 설정되어 있으면 그것을 사용, 아니면 파라미터 사용
+                    if (!env.SCAN_ID) env.SCAN_ID = params.SCAN_ID
+                    if (!env.PROJECT_ID) env.PROJECT_ID = params.PROJECT_ID
+                    if (!env.SCAN_MODE) env.SCAN_MODE = params.SCAN_MODE
+                    if (!env.SCAN_TYPE) env.SCAN_TYPE = params.SCAN_TYPE
+                    if (!env.PROFILE_MODE) env.PROFILE_MODE = params.PROFILE_MODE
+                    if (!env.TRIGGER_MODE) env.TRIGGER_MODE = params.TRIGGER_MODE
+                    if (!env.NOTIFY_EMAILS) env.NOTIFY_EMAILS = params.NOTIFY_EMAILS
+                    
                     reportProgress("setup", "running", "입력 검증", 5)
                     echo "빌드 번호: ${BUILD_NUMBER}"
-                    echo "스캔 모드: ${params.SCAN_MODE} (${params.SCAN_MODE == 'custom' ? 'Full Scan (langgraph-scanner)' : 'Quick Scan (langgraph-scan)'})"
-                    echo "스캔 타입: ${params.SCAN_TYPE}"
+                    echo "스캔 모드: ${env.SCAN_MODE} (${env.SCAN_MODE == 'custom' ? 'Full Scan (langgraph-scanner)' : 'Quick Scan (langgraph-scan)'})"
+                    echo "스캔 타입: ${env.SCAN_TYPE}"
 
-                    // 프로젝트 이름 설정
-                    if (params.SOURCE_TYPE == 'git' && params.GITHUB_URL) {
-                        env.PROJECT_NAME = params.GITHUB_URL.tokenize('/')[-1].replace('.git', '')
-                    } else if (params.PROJECT_NAME) {
-                        env.PROJECT_NAME = params.PROJECT_NAME
-                    } else {
-                        error("프로젝트 이름을 확인할 수 없습니다.")
+                    // 프로젝트 이름 설정 (이미 Auto-Scan Setup에서 설정되었을 수 있음)
+                    if (!env.PROJECT_NAME) {
+                        if (params.SOURCE_TYPE == 'git' && params.GITHUB_URL) {
+                            env.PROJECT_NAME = params.GITHUB_URL.tokenize('/')[-1].replace('.git', '')
+                        } else if (params.PROJECT_NAME) {
+                            env.PROJECT_NAME = params.PROJECT_NAME
+                        } else {
+                            error("프로젝트 이름을 확인할 수 없습니다.")
+                        }
                     }
 
                     env.PROJECT_PATH = "${PROJECTS_DIR}/${env.PROJECT_NAME}"
@@ -257,7 +376,7 @@ EOF
                     '''
 
                     // Quick Scan용 langgraph-scan 설정 (SCAN_MODE가 preset일 때만)
-                    if (params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom') {
+                    if (env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'custom') {
                         sh '''
                             set -e
                             cd $QUICK_SCAN_DIR
@@ -344,10 +463,10 @@ EOF
             }
         }
 
-        stage('Detect Project Language & Env (Quick)') {
+            stage('Detect Project Language & Env (Quick)') {
             when {
                 allOf {
-                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom' }
+                    expression { env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'custom' }
                 }
             }
             steps {
@@ -417,7 +536,7 @@ EOF
         stage('Select Codeql SUITE (Quick)') {
             when {
                 allOf {
-                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom' }
+                    expression { env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'custom' }
                 }
             }
             steps {
@@ -449,7 +568,7 @@ EOF
         stage('CodeQL Analyze (Quick)') {
             when {
                 allOf {
-                    expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom'}
+                    expression { env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'custom'}
                 }
             }
             steps {
@@ -509,8 +628,8 @@ EOF
         stage('Start Serena MCP Server (Discovery)') {
             when {
                 anyOf {
-                    expression { params.SCAN_MODE == 'custom' }
-                    expression { params.SCAN_MODE == 'preset' }
+                    expression { env.SCAN_MODE == 'custom' }
+                    expression { env.SCAN_MODE == 'preset' }
                 }
             }
             steps {
@@ -546,7 +665,7 @@ EOF
 
         stage('Start Code Indexer Server (Verifier)') {
             when {
-                expression { params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'custom'}
+                expression { env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'custom'}
             }
             steps {
                 script {
@@ -592,7 +711,7 @@ EOF
         }
 
         stage('Run Source Extractor') {
-            when { expression { params.SCAN_MODE == 'custom' && params.RUN_SAST } }
+            when { expression { env.SCAN_MODE == 'custom' && params.RUN_SAST } }
             agent {
                 docker {
                     image 'returntocorp/semgrep'
@@ -653,7 +772,9 @@ EOF
                         }
                     }
 
-                    if (params.SCAN_MODE == 'preset' || params.SCAN_MODE == 'quick') {
+
+
+                    if (env.SCAN_MODE == 'preset' || env.SCAN_MODE == 'quick') {
                         // Quick Scan with langgraph-scan
                         runMasked('''
                             set -e
@@ -661,7 +782,7 @@ EOF
                             . venv/bin/activate
                             export BUILD_NUMBER=$BUILD_NUMBER
                             export SCAN_TYPE=$SCAN_TYPE
-                            export API_BASE_URL=http://backend:3000
+                            export API_BASE_URL=${env.API_BASE ?: params.API_BASE}
 ''' + llmEnvExports + '''
 
                             if [ -z "${SEED_FILE_PATH}" ]; then
@@ -669,44 +790,62 @@ EOF
                                 exit 1
                             fi
 
-                            python3 main.py --project $PROJECT_NAME --input-seed-file "${SEED_FILE_PATH}" --provider $API_PROVIDER --model "$MODEL"
+                            python3 main.py --project $PROJECT_NAME --input-seed-file "${SEED_FILE_PATH}" --provider $API_PROVIDER --model "$MODEL" --no-langsmith
                         ''')
-                    } else if (params.SCAN_MODE == 'custom') {
-                        // Full Scan: verifier(langgraph-scan)와 discovery(langgraph-scanner)를 병렬 실행
-                        parallel failFast: true, verifier: {
-                            runMasked('''
-                                set -e
-                                cd $QUICK_SCAN_DIR
-                                . venv/bin/activate
-                                export BUILD_NUMBER=$BUILD_NUMBER
-                                export SCAN_TYPE=$SCAN_TYPE
-                                export API_BASE_URL=http://backend:3000
-''' + llmEnvExports + '''
-                                if [ -z "${SEED_FILE_PATH}" ]; then
-                                    echo "SEED_FILE_PATH is required for quick scan (verifier)."
-                                    exit 1
-                                fi
+                    } else if (env.SCAN_MODE == 'custom') {
+                        // Full Scan: 순차 실행 (메모리 안정성 및 에러 추적 용이)
+                        
+                        // 1. Verifier 실행 (langgraph-scan)
+                        echo "--- [Phase 1] Verifier (Quick Scan) ---"
+                        runMasked("""#!/bin/bash
+                            set -e
+                            cd ${env.QUICK_SCAN_DIR}
+                            . venv/bin/activate
+                            export BUILD_NUMBER=${env.BUILD_NUMBER}
+                            export SCAN_TYPE=${env.SCAN_TYPE}
+                            export API_BASE_URL=${env.API_BASE ?: params.API_BASE}
+                            export API_PROVIDER=${env.API_PROVIDER ?: params.API_PROVIDER}
+                            export MODEL="${env.MODEL ?: params.MODEL}"
+${llmEnvExports}
+                            if [ -z "${env.SEED_FILE_PATH}" ]; then
+                                echo "SEED_FILE_PATH is required for quick scan (verifier)."
+                                exit 1
+                            fi
 
-                                python3 main.py --project $PROJECT_NAME --input-seed-file "${SEED_FILE_PATH}" --provider $API_PROVIDER --model "$MODEL"
-                            ''')
-                        }, discovery: {
-                            runMasked('''
-                                set -e
-                                cd $SCANNER_DIR
-                                . venv/bin/activate
-                                export BUILD_NUMBER=$BUILD_NUMBER
-                                export SCAN_TYPE=$SCAN_TYPE
-                                export API_BASE_URL=http://backend:3000
-''' + llmEnvExports + '''
-                                currentTimeStrfTime=$(date +"%Y%m%d_%H%M%S")
-                                python3 extract_candidate_from_sarif.py ${PROJECT_PATH}/source-extract.sarif source-extract_${currentTimeStrfTime}.json
-                                ls -al ${PROJECT_PATH}/source-extract.sarif
-                                rm ${PROJECT_PATH}/source-extract.sarif
-                                rm analysis_results/${PROJECT_NAME}_*.json || true
-                                rm discovery_results/${PROJECT_NAME}_*.json || true
-                                python3 main.py --project $PROJECT_NAME --mode full --provider $API_PROVIDER --model "$MODEL" --use-env --ignore-previous-versions --input-seed-source json --input-seed-file source-extract_${currentTimeStrfTime}.json
-                            ''')
-                        }
+                            python3 main.py --project ${env.PROJECT_NAME} --input-seed-file "${env.SEED_FILE_PATH}" --provider \${API_PROVIDER} --model "\${MODEL}" --no-langsmith
+                        """.stripIndent())
+
+                        // 2. Discovery 실행 (langgraph-scanner)
+                        echo "--- [Phase 2] Discovery (Deep Analysis) ---"
+                        runMasked("""#!/bin/bash
+                            set -e
+                            cd ${env.SCANNER_DIR}
+                            . venv/bin/activate
+                            export BUILD_NUMBER=${env.BUILD_NUMBER}
+                            export SCAN_TYPE=${env.SCAN_TYPE}
+                            export API_BASE_URL=${env.API_BASE ?: params.API_BASE}
+                            export API_PROVIDER=${env.API_PROVIDER ?: params.API_PROVIDER}
+                            export MODEL="${env.MODEL ?: params.MODEL}"
+${llmEnvExports}
+                            currentTimeStrfTime=\$(date +"%Y%m%d_%H%M%S")
+                            
+                            # SARIF 파일이 있으면 변환, 없으면 빈 JSON 생성 방지 로직 필요
+                            if [ -f "${env.PROJECT_PATH}/source-extract.sarif" ]; then
+                                python3 extract_candidate_from_sarif.py "${env.PROJECT_PATH}/source-extract.sarif" "source-extract_\${currentTimeStrfTime}.json"
+                                rm "${env.PROJECT_PATH}/source-extract.sarif"
+                                SEED_ARG="--input-seed-file source-extract_\${currentTimeStrfTime}.json"
+                            else
+                                echo "Source extract SARIF not found, running without seed."
+                                SEED_ARG=""
+                            fi
+
+                            # 이전 결과 삭제
+                            rm -f analysis_results/${env.PROJECT_NAME}_*.json
+                            rm -f discovery_results/${env.PROJECT_NAME}_*.json
+
+                            # API_PROVIDER, MODEL 등은 위에서 export 했으므로 환경변수로 사용됨 (스크립트 내 사용 시 \${VAR}로 쉘 변수임을 명시하거나 그냥 써도 됨, 여기선 \$ 사용)
+                            python3 main.py --project ${env.PROJECT_NAME} --mode full --provider \${API_PROVIDER} --model "\${MODEL}" --use-env --ignore-previous-versions --input-seed-source json \$SEED_ARG --no-langsmith
+                        """.stripIndent())
                     }
                     reportProgress("analysis", "completed", "보안 분석 완료", 85)
                 }
@@ -722,12 +861,12 @@ EOF
 
                     sh """
                         set -e
-                        export SCAN_MODE="${params.SCAN_MODE}"
+                        export SCAN_MODE="${env.SCAN_MODE}"
                         export DISCOVERY_RESULT_FILE="${discoveryResultFile}"
                         export VERIFIER_RESULT_FILE="${verifierResultFile}"
                         export API_PROVIDER="${params.API_PROVIDER}"
                         export MODEL="${params.MODEL}"
-                        export SCAN_TYPE="${params.SCAN_TYPE}"
+                        export SCAN_TYPE="${env.SCAN_TYPE}"
                         export BUILD_NUMBER="${BUILD_NUMBER}"
 
                         # 결과 JSON을 IngestScanResults 스키마에 맞게 래핑
@@ -793,7 +932,7 @@ print(f"✓ 병합된 취약점 {len(all_vulns)}건, 사용된 파일: {', '.joi
 PY
                         
                         # 백엔드로 결과 전송
-                        curl -X POST "${params.API_BASE}/projects/${params.PROJECT_ID}/scans/${params.SCAN_ID}/ingest" \\
+                        curl -X POST "${env.API_BASE ?: params.API_BASE}/projects/${env.PROJECT_ID ?: params.PROJECT_ID}/scans/${env.SCAN_ID ?: params.SCAN_ID}/ingest" \\
                             -H "Content-Type: application/json" \\
                             -H "X-Api-Key: ${env.BACKEND_SERVICE_API_KEY}" \\
                             -H "X-Jenkins-Token: ${env.JENKINS_CALLBACK_SECRET}" \\
@@ -810,8 +949,8 @@ PY
             steps {
                 script {
                     reportProgress("retrieve", "running", "결과 아카이빙", 97)
-                    def resultDir = params.SCAN_MODE == 'preset' ? env.QUICK_SCAN_DIR : env.SCANNER_DIR
-                    def resultFile = params.SCAN_MODE == 'preset' ? 
+                    def resultDir = env.SCAN_MODE == 'preset' ? env.QUICK_SCAN_DIR : env.SCANNER_DIR
+                    def resultFile = env.SCAN_MODE == 'preset' ? 
                         "${resultDir}/results/${env.PROJECT_NAME}_report_latest.json" :
                         "${resultDir}/analysis_results/${env.PROJECT_NAME}_latest.json"
 

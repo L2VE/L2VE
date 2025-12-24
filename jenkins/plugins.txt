@@ -18,3 +18,5 @@ login-theme:284.v95044396a_484
 simple-theme-plugin:211.v5424a_5510e47
 mailer:latest
 email-ext:latest
+generic-webhook-trigger:latest
+pipeline-utility-steps:latest

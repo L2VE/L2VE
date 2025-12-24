@@ -39,13 +39,14 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Jenkins
+    JENKINS_EXTERNAL_URL: Optional[str] = None  # GitHub Webhook용 외부 접근 URL
     JENKINS_URL: str
     JENKINS_USER: str
-    JENKINS_API_TOKEN: str
-    JENKINS_JOB_NAME: str
+    JENKINS_API_TOKEN: Optional[str] = None
+    JENKINS_JOB_NAME: Optional[str] = None
     JENKINS_CALLBACK_SECRET: str
     BACKEND_SERVICE_API_KEY: str
-    JENKINS_GIT_CREDENTIALS_ID: Optional[str] = "github-token2"  # Jenkins Git credentials ID (기본값: github-token)
+    JENKINS_GIT_CREDENTIALS_ID: Optional[str] = "github-token"  # Jenkins Git credentials ID (기본값: github-token)
     GITHUB_TOKEN: Optional[str] = None  # GitHub Personal Access Token (webhook 자동 등록용)
     JENKINSFILE_PATH: Optional[str] = None  # Jenkinsfile 절대 경로 (선택사항, 미지정 시 자동 탐색)
     JENKINSFILE_GIT_URL: Optional[str] = None  # Jenkinsfile Git 저장소 URL (SCM 모드 사용 시, Script Security 회피)

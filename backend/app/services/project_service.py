@@ -10,7 +10,7 @@ from app.services.jenkins_job_service import JenkinsJobService
 
 class ProjectService:
     @staticmethod
-    def create_project(db: Session, project_data: ProjectCreate, user_id: int) -> Project:
+    def create_project(db: Session, project_data: ProjectCreate, user_id: int, request_host: Optional[str] = None) -> Project:
         """
         Create a new project
         
@@ -55,6 +55,8 @@ class ProjectService:
             webhook_secret=project_data.webhook_secret,
             default_scan_mode=project_data.default_scan_mode or 'custom',  # 기본값: Full Scan
             default_profile_mode=project_data.default_profile_mode or 'preset',  # 기본값: 기본 설정
+            default_provider=project_data.default_provider,
+            default_model=project_data.default_model,
             # Jenkins job info will be populated after job provisioning
             jenkins_job_name=None,
             jenkins_job_url=None,
@@ -68,7 +70,7 @@ class ProjectService:
         # 모든 프로젝트에 대해 Jenkins job 생성 (web 또는 git trigger mode 모두)
         try:
             print(f"[DEBUG] Provisioning Jenkins job for project: name={new_project.name}, trigger_mode={new_project.trigger_mode}, git_url={new_project.git_url}")
-            ProjectService._provision_jenkins_job(db, new_project, allow_existing_job=False)
+            ProjectService._provision_jenkins_job(db, new_project, allow_existing_job=False, request_host=request_host)
         except Exception as exc:
             db.delete(new_project)
             db.commit()
@@ -206,7 +208,7 @@ class ProjectService:
         }
 
     @staticmethod
-    def _provision_jenkins_job(db: Session, project: Project, allow_existing_job: bool = True) -> None:
+    def _provision_jenkins_job(db: Session, project: Project, allow_existing_job: bool = True, request_host: Optional[str] = None) -> None:
         """
         Provision Jenkins job for a project (both web and git trigger modes).
         """
@@ -228,7 +230,8 @@ class ProjectService:
                 job_name=project.jenkins_job_name if allow_existing_job else None,
                 git_url=project.git_url,
                 git_branch=project.git_branch,
-                webhook_secret=project.webhook_secret
+                webhook_secret=project.webhook_secret,
+                request_host=request_host
             )
             print(f"[DEBUG] Jenkins job provisioned: {job_info}")
         except Exception as exc:

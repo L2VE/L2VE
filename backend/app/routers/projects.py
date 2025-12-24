@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status, Header, HTTPException
+from fastapi import APIRouter, Depends, status, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -6,7 +6,7 @@ from app.database import get_db
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
 from app.services.scan_service import ScanService
-from app.schemas.scan import TriggerScanRequest
+from app.schemas.scan import TriggerScanRequest, ScanResponse
 from app.utils.auth import get_current_user
 from app.models.user import User
 from app.models.project import Project
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     project_data: ProjectCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -27,7 +28,9 @@ async def create_project(
         - Requires authentication
         - Automatically adds creator as owner
     """
-    project = ProjectService.create_project(db, project_data, current_user.id)
+    # 현재 요청의 Hostname 전달 (Webhook URL 자동 생성용)
+    request_host = request.url.hostname
+    project = ProjectService.create_project(db, project_data, current_user.id, request_host=request_host)
     return project
 
 @router.get("/", response_model=List[ProjectResponse])
@@ -110,11 +113,11 @@ async def delete_project(
     ProjectService.delete_project(db, project_id, current_user)
     return None
 
-@router.post("/by-git-url/{git_url:path}/auto-scan")
-async def auto_scan_by_git_url(
-    git_url: str,
+@router.post("/auto-scan/git", status_code=status.HTTP_201_CREATED)
+async def create_auto_scan_git(
+    payload: TriggerScanRequest,
     db: Session = Depends(get_db),
-    x_api_key: Optional[str] = Header(None, alias="X-Api-Key")
+    api_key: Optional[str] = Header(None, alias="X-Api-Key")
 ):
     """
     Git commit 이벤트로 자동 스캔 생성
@@ -131,13 +134,21 @@ async def auto_scan_by_git_url(
         settings = get_settings()
         expected_key = getattr(settings, "BACKEND_SERVICE_API_KEY", None)
         
-        if not expected_key or x_api_key != expected_key:
-            logger.warning(f"Invalid API key for auto-scan: provided={bool(x_api_key)}, expected={bool(expected_key)}")
+        # 1. API Key 인증
+        if not expected_key or api_key != expected_key:
+            logger.warning(f"Invalid API key for auto-scan: provided={bool(api_key)}, expected={bool(expected_key)}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or missing API key"
             )
         
+        git_url = payload.github_url
+        if not git_url:
+             raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="github_url is required in payload"
+            )
+
         logger.info(f"[AUTO-SCAN] Received request for git_url: {git_url}")
         
         # Git URL 디코딩 (URL 인코딩된 경우)
@@ -191,7 +202,7 @@ async def auto_scan_by_git_url(
             logger.info(f"[AUTO-SCAN] Available git projects: {[(p.id, p.name, p.git_url) for p in all_git_projects]}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project not found for git URL: {decoded_git_url}. Available projects: {[(p.id, p.name, p.git_url) for p in all_git_projects]}"
+                detail=f"Project not found for git URL: {decoded_git_url}. Please ensure project is created with correct Git URL."
             )
         
         logger.info(f"[AUTO-SCAN] Found project: id={project.id}, name={project.name}, jenkins_job={project.jenkins_job_name}")
@@ -201,53 +212,51 @@ async def auto_scan_by_git_url(
         default_profile_mode = project.default_profile_mode or 'preset'  # 'preset' (기본 설정), 'custom' (고급 설정)
         logger.info(f"[AUTO-SCAN] Using scan_mode={default_scan_mode}, profile_mode={default_profile_mode}")
         
-        # 기본 설정으로 스캔 생성 및 트리거
-        trigger_request = TriggerScanRequest(
-            github_url=project.git_url,
-            source_type='git',
-            scan_type='ALL',
-            api_provider='groq',
-            model='qwen/qwen3-32b',
-            run_sast=True,
-            scan_mode=default_scan_mode,  # 프로젝트의 기본 스캔 모드 사용
-            profile_mode=default_profile_mode  # 프로젝트의 기본 프로필 모드 사용
-        )
+        # 3. Scan 생성 (System User로 생성)
+        # 시스템 유저 찾기 (없으면 생성하거나 첫 번째 유저 사용)
+        system_user = db.query(User).filter(User.email == "system@l2ve.com").first()
+        if not system_user:
+            # Fallback: admin 유저
+            system_user = db.query(User).filter(User.is_superuser == True).first()
         
-        # 시스템 사용자로 스캔 트리거 (프로젝트 소유자 사용)
-        project_owner = db.query(User).filter(User.id == project.user_id).first()
-        if not project_owner:
-            logger.error(f"[AUTO-SCAN] Project owner not found for project_id={project.id}, user_id={project.user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Project owner not found for project_id={project.id}"
-            )
+        if not system_user:
+             # Fallback to project owner if system user fails
+             system_user = db.query(User).filter(User.id == project.user_id).first()
+             if not system_user:
+                 raise HTTPException(status_code=500, detail="System user or Project owner not found for auto-scan")
         
-        logger.info(f"[AUTO-SCAN] Creating scan record for project_id={project.id}, user_id={project_owner.id}")
+        # Jenkins가 보낸 커밋 해시 등이 payload에 있을 수 있음
+        commit_hash = payload.github_commit_hash if hasattr(payload, 'github_commit_hash') else 'Unknown commit'
         
-        # Git webhook 트리거의 경우: Jenkins 빌드는 이미 GitHub webhook에 의해 시작되었으므로
-        # 스캔 레코드만 생성하고 Jenkins 빌드는 트리거하지 않음
-        # Jenkinsfile의 Auto-Scan Setup 스테이지에서 SCAN_ID를 받아서 사용함
         from app.services.scan_service import ScanService
         from app.schemas.scan import ScanCreate
         
+        # 2-2. Provider/Model Fallback Logic
+        # Payload(Jenkins/Webhook) -> Project Defaults -> Global Defaults
+        final_provider = payload.api_provider or project.default_provider or 'groq'
+        final_model = payload.model or project.default_model or 'llama3-70b-8192'
+        logger.info(f"[AUTO-SCAN] LLM Config: provider={final_provider}, model={final_model}")
+        
         scan_data = ScanCreate(
-            name=f"{trigger_request.scan_type} Scan",
-            scan_type=trigger_request.scan_type,
+            name=f"{payload.scan_type or 'ALL'} Scan (Auto)",
+            scan_type=payload.scan_type or 'ALL',
             scan_config={
-                "github_url": trigger_request.github_url,
-                "api_provider": trigger_request.api_provider,
-                "model": trigger_request.model,
-                "run_sast": trigger_request.run_sast,
+                "github_url": project.git_url,
+                "api_provider": final_provider,
+                "model": final_model,
+                "run_sast": payload.run_sast if payload.run_sast is not None else True,
                 "scan_mode": default_scan_mode,
                 "profile_mode": default_profile_mode,
             }
         )
         
+        logger.info(f"[AUTO-SCAN] Creating scan record for project_id={project.id}, user_id={system_user.id}")
+
         scan = ScanService.create_scan(
             db=db,
             scan_data=scan_data,
             project_id=project.id,
-            user=project_owner
+            user=system_user
         )
         
         # 상태를 running으로 설정 (Jenkins 빌드가 이미 시작되었으므로)
@@ -260,15 +269,16 @@ async def auto_scan_by_git_url(
         return {
             "project_id": project.id,
             "project_name": project.name,
-            "scan_id": scan.id,
+            "id": scan.id,
             "scan_status": scan.status,
-            "trigger_mode": project.trigger_mode or 'git',  # Jenkinsfile에서 사용할 트리거 모드
-            "scan_mode": default_scan_mode,  # Jenkinsfile에서 사용할 스캔 모드
-            "profile_mode": default_profile_mode,  # Jenkinsfile에서 사용할 프로필 모드
+            "trigger_mode": project.trigger_mode or 'git',
+            "scan_mode": default_scan_mode,
+            "profile_mode": default_profile_mode,
+            "api_provider": final_provider,
+            "model": final_model,
             "message": f"Auto-scan triggered for project '{project.name}' via Git commit event"
         }
     except HTTPException:
-        # HTTPException은 그대로 전달
         raise
     except Exception as e:
         logger.error(f"[AUTO-SCAN] Unexpected error: {type(e).__name__}: {str(e)}", exc_info=True)
